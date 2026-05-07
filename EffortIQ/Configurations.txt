@@ -1,0 +1,24 @@
+Configurations
+1. Connection -> Jira login
+2. Project Spaces -> List -> Selection
+
+Dashboard
+Upload Section
+1. Upload Excel
+2. Validate
+
+Next >
+1. Generate Estimate
+2. Continue with Jira
+
+Next >
+
+1.1 Preview Excel
+1.2 Download xlsx
+
+2.1 Select Project
+2.2 Generate Jira Tickets
+2.3 Navigate to Jira
+2
+Generate final estimationEngine.js too
+I want WBS as a “View WBS” button that opens a popup/modal for clean readability

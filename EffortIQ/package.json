@@ -1,0 +1,53 @@
+{
+  "name": "effortiq",
+  "version": "1.0.0",
+  "description": "EffortIQ - Intelligent Effort Estimation for Jira",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --inspect=5858",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win --publish never",
+    "pack": "electron-builder --dir",
+    "prestart": "node -e \"if (!require('fs').existsSync('node_modules/electron')) process.exit(1)\" || npm install"
+  },
+  "dependencies": {
+    "axios": "^1.6.5",
+    "dotenv": "^16.3.1",
+    "js-yaml": "^4.1.1",
+    "mammoth": "^1.12.0",
+    "pdf-parse": "^2.4.5",
+    "unzipper": "^0.12.3",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^41.5.0",
+    "electron-builder": "^26.8.1"
+  },
+  "build": {
+    "appId": "com.effortiq.app",
+    "productName": "EffortIQ",
+    "files": [
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ],
+      "certificateFile": null,
+      "certificatePassword": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EffortIQ - Intelligent Effort Estimation</title>
+
+  <!-- Theme / styles -->
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="app-container">
+
+    <!-- Header -->
+    <header class="header">
+      <div class="header-content">
+        <div class="logo">
+          <span class="logo-icon">⚡</span>
+          <div>
+            <h1>EffortIQ</h1>
+            <p class="subtitle">Intelligent Effort Estimation for Jira</p>
+          </div>
+        </div>
+
+        <div class="header-actions">
+          <button class="btn-icon" id="settingsBtn" title="Settings">⚙️</button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <!-- Sidebar -->
+      <aside class="sidebar">
+        <nav class="nav-menu">
+          <button class="nav-item active" data-section="home">
+            <span class="nav-icon">📊</span>
+            <span>Dashboard</span>
+          </button>
+
+          <button class="nav-item" data-section="upload">
+            <span class="nav-icon">📁</span>
+            <span>Upload</span>
+          </button>
+
+          <!-- ✅ NEW: SFD Estimation sidebar item -->
+          <button class="nav-item" data-section="sfd">
+            <span class="nav-icon">🧾</span>
+            <span>SFD Estimation</span>
+          </button>
+
+          <button class="nav-item" data-section="settings">
+            <span class="nav-icon">⚙️</span>
+            <span>Settings</span>
+          </button>
+
+          <button class="nav-item" data-section="about">
+            <span class="nav-icon">ℹ️</span>
+            <span>About</span>
+          </button>
+        </nav>
+      </aside>
+
+      <!-- Content Area -->
+      <div class="content-area">
+
+        <!-- ===================================================== -->
+        <!-- Dashboard Section -->
+        <!-- ===================================================== -->
+        <section id="section-home" class="section active">
+          <div class="section-header">
+            <h2>Dashboard</h2>
+            <p>Welcome to EffortIQ - Bulk Effort Estimation &amp; Jira Integration</p>
+          </div>
+
+          <div class="dashboard-grid">
+
+            <!-- Quick Actions -->
+            <div class="card">
+              <div class="card-header">
+                <h3>🚀 Quick Actions</h3>
+              </div>
+              <div class="card-body">
+                <button class="btn btn-primary btn-lg" id="uploadExcelBtn">📂 Upload Excel File</button>
+                <div class="divider"></div>
+                <button class="btn btn-secondary" id="setupConfigBtn">⚙️ Setup Configuration</button>
+              </div>
+            </div>
+
+            <!-- Status -->
+            <div class="card">
+              <div class="card-header">
+                <h3>📈 Status</h3>
+              </div>
+              <div class="card-body">
+                <div class="status-item">
+                  <span class="status-label">Configuration:</span>
+                  <span class="status-value" id="configStatus">❌ Not Set</span>
+                </div>
+
+                <div class="status-item">
+                  <span class="status-label">Jira Connection:</span>
+                  <span class="status-value" id="jiraStatus">❌ Not Connected</span>
+                </div>
+
+                <div class="status-item">
+                  <span class="status-label">AI Provider:</span>
+                  <span class="status-value" id="providerStatus">❌ Not Configured</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Recent Activity -->
+            <div class="card">
+              <div class="card-header">
+                <h3>📋 Recent Activity</h3>
+              </div>
+              <div class="card-body">
+                <div class="activity-log" id="activityLog">
+                  <p class="empty-state">No recent activity</p>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ===================================================== -->
+        <!-- Upload Section (CRIM Estimation) -->
+        <!-- ===================================================== -->
+        <section id="section-upload" class="section">
+          <div class="section-header">
+            <h2>Upload &amp; Process</h2>
+            <p>Upload your Excel file with CRIM data and process estimates</p>
+          </div>
+
+          <div class="upload-container">
+
+            <!-- Step 1 -->
+            <div class="card">
+              <div class="card-header">
+                <h3>📁 Step 1: Select File</h3>
+              </div>
+              <div class="card-body">
+                <div class="dropzone" id="dropzone">
+                  <div class="dropzone-icon">📊</div>
+                  <p class="dropzone-text">Drag &amp; drop your Excel file here</p>
+                  <p class="dropzone-subtext">or</p>
+
+                  <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none;" />
+                  <!-- kept as-is for compatibility with your existing UI -->
+                  <button class="btn btn-outline" onclick="document.getElementById('fileInput').click()">Browse Files</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 2 -->
+            <div class="card" id="previewCard" style="display:none;">
+              <div class="card-header">
+                <h3>📋 Step 2: Data Preview</h3>
+              </div>
+              <div class="card-body">
+                <p id="previewCount" class="muted" style="margin:0 0 10px 0;"></p>
+
+                <div class="table-wrapper preview-virtual" id="previewTableWrapper">
+                  <table class="data-table" id="previewTable">
+                    <thead>
+                      <tr>
+                        <th>Summary</th>
+                        <th>Description</th>
+                        <th>CRIM Type</th>
+                      </tr>
+                    </thead>
+                    <tbody id="previewTableBody"></tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 3 -->
+            <div class="card" id="optionsCard" style="display:none;">
+              <div class="card-header">
+                <h3>⚙️ Step 3: Processing Options</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label for="aiProvider">AI Provider:</label>
+                  <select id="aiProvider" class="form-control">
+                    <option value="openai">OpenAI (GPT-4o-mini)</option>
+                    <option value="azure">Azure OpenAI</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="local">Local Provider</option>
+                  </select>
+                </div>
+
+                <div class="form-group">
+                  <label for="estimateOnly">
+                    <input type="checkbox" id="estimateOnly" name="estimateOnly" />
+                    Fetch estimates only (don't create Jira tickets)
+                  </label>
+                </div>
+
+                <!-- Jira Project dropdown -->
+                <div class="form-group" id="jiraProjectGroup">
+                  <label for="jiraProjectSelect">Jira Project:</label>
+                  <select id="jiraProjectSelect" class="form-control">
+                    <option value="">Select a project...</option>
+                  </select>
+
+                  <div class="button-group" style="margin-top:10px;">
+                    <button class="btn btn-outline" id="refreshProjectsBtn" type="button">🔄 Refresh Projects</button>
+                  </div>
+
+                  <p style="margin-top:8px; color:var(--text-tertiary); font-size:0.9rem;">
+                    Tip: Only projects you have access to are shown.
+                  </p>
+                </div>
+
+                <div class="button-group">
+                  <button class="btn btn-primary btn-lg" id="processBtn">⚡ Process &amp; Generate Estimates</button>
+                  <button class="btn btn-secondary" id="cancelBtn">Cancel</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Step 4 -->
+            <div class="card" id="resultsCard" style="display:none;">
+              <div class="card-header">
+                <h3>✅ Step 4: Results</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="progress-container" id="progressContainer">
+                  <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                  </div>
+                  <p class="progress-text" id="progressText">Processing: 0/0</p>
+                </div>
+
+                <div class="table-wrapper" style="margin-top:20px;">
+                  <table class="data-table" id="resultsTable">
+                    <thead>
+                      <tr>
+                        <th>Summary</th>
+                        <th>CRIM Type</th>
+                        <th>Complexity</th>
+                        <th>Total Effort (h)</th>
+                        <th>WBS</th>
+                        <th>AI Reasoning</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="resultsTableBody"></tbody>
+                  </table>
+                </div>
+
+                <div class="button-group" style="margin-top:20px;">
+                  <button class="btn btn-outline" id="exportAllJsonBtn" type="button">⬇️ Export All (JSON)</button>
+                  <button class="btn btn-outline" id="exportAllCsvBtn" type="button">⬇️ Export All (CSV)</button>
+                  <button class="btn btn-success btn-lg" id="uploadJiraBtn" style="display:none;">📤 Upload to Jira</button>
+                  <button class="btn btn-secondary" id="newUploadBtn">⬆️ Upload New File</button>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ===================================================== -->
+        <!-- ✅ NEW: SFD Estimation Section -->
+        <!-- ===================================================== -->
+        <section id="section-sfd" class="section">
+          <div class="section-header">
+            <h2>SFD Estimation</h2>
+            <p>Upload an SFD document, extract implementation activities, classify with AI, and estimate effort.</p>
+          </div>
+
+          <div class="upload-container">
+
+            <!-- Step 1: Upload SFD -->
+            <div class="card">
+              <div class="card-header">
+                <h3>🗂️ Step 1: Upload SFD Document</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="dropzone" id="sfdDropzone">
+                  <div class="dropzone-icon">📄</div>
+                  <p class="dropzone-text">Drag &amp; drop your SFD file here</p>
+                  <p class="dropzone-subtext">Supported: PDF, DOCX, TXT, MD</p>
+
+                  <input type="file" id="sfdFileInput" accept=".pdf,.docx,.txt,.md" style="display:none;" />
+                  <button class="btn btn-outline" id="sfdBrowseBtn" type="button">Browse SFD</button>
+                </div>
+
+                <div class="divider"></div>
+                <div id="sfdParseMeta" class="muted" style="display:none;"></div>
+                <div id="sfdParseError" class="test-result error" style="display:none;"></div>
+              </div>
+            </div>
+
+            <!-- Step 2: Extract -->
+            <div class="card" id="sfdExtractCard" style="display:none;">
+              <div class="card-header">
+                <h3>🧩 Step 2: Extract Activities</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="form-group">
+                  <label for="sfdMaxActivities">Max activities to extract</label>
+                  <input id="sfdMaxActivities" class="form-control" type="number" min="20" max="500" value="200" />
+                  <p class="muted" style="margin-top:8px;">
+                    Heuristic extraction focuses on actionable statements (shall/must/implement/etc.).
+                  </p>
+                </div>
+
+                <div class="button-group">
+                  <button class="btn btn-primary" id="sfdExtractBtn" type="button">🧠 Extract Activities</button>
+                  <button class="btn btn-secondary" id="sfdResetBtn" type="button">Reset</button>
+                </div>
+
+                <div class="divider"></div>
+                <p id="sfdExtractSummary" class="muted" style="margin:0 0 10px 0;"></p>
+
+                <div class="table-wrapper" id="sfdActivitiesTableWrap" style="display:none;">
+                  <table class="data-table" id="sfdActivitiesTable">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Activity</th>
+                        <th>Subtype Hint</th>
+                        <th>Evidence</th>
+                      </tr>
+                    </thead>
+                    <tbody id="sfdActivitiesTbody"></tbody>
+                  </table>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Step 3: Classify -->
+            <div class="card" id="sfdClassifyCard" style="display:none;">
+              <div class="card-header">
+                <h3>🤖 Step 3: AI Classification (Subtype + Complexity)</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="form-group">
+                  <label for="sfdProvider">AI Provider</label>
+                  <select id="sfdProvider" class="form-control">
+                    <option value="openai">OpenAI</option>
+                    <option value="azure">Azure OpenAI</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="local">Local Provider</option>
+                  </select>
+                  <p class="muted" style="margin-top:8px;">
+                    Uses SFD-specific prompts to classify activities (no hours/days requested from AI).
+                  </p>
+                </div>
+
+                <div class="form-group">
+                  <label for="sfdBatchSize">Batch size</label>
+                  <input id="sfdBatchSize" class="form-control" type="number" min="5" max="25" value="10" />
+                </div>
+
+                <div class="form-group">
+                  <label>
+                    <input type="checkbox" id="sfdIncludeSourceHints" />
+                    Include source/component hints in reasoning (e.g., Voucher_Row_API)
+                  </label>
+                </div>
+
+                <div class="button-group">
+                  <button class="btn btn-primary" id="sfdClassifyBtn" type="button">✨ Classify Activities</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <div class="table-wrapper" id="sfdClassifiedTableWrap" style="display:none;">
+                  <table class="data-table" id="sfdClassifiedTable">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Activity</th>
+                        <th>Subtype</th>
+                        <th>Complexity</th>
+                        <th>Reasoning</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="sfdClassifiedTbody"></tbody>
+                  </table>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Step 4: Estimate -->
+            <div class="card" id="sfdEstimateCard" style="display:none;">
+              <div class="card-header">
+                <h3>📐 Step 4: Deterministic Effort Estimation</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="progress-container" id="sfdProgressContainer">
+                  <div class="progress-bar">
+                    <div class="progress-fill" id="sfdProgressFill"></div>
+                  </div>
+                  <p class="progress-text" id="sfdProgressText">Ready</p>
+                </div>
+
+                <div class="button-group">
+                  <button class="btn btn-success" id="sfdEstimateBtn" type="button">✅ Estimate Effort</button>
+                </div>
+
+                <div class="divider"></div>
+
+                <div id="sfdTotals" class="muted" style="display:none;"></div>
+
+                <div class="table-wrapper" id="sfdEstimatedTableWrap" style="display:none; margin-top:12px;">
+                  <table class="data-table" id="sfdEstimatedTable">
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Activity</th>
+                        <th>Subtype</th>
+                        <th>Complexity</th>
+                        <th>Effort (h)</th>
+                        <th>WBS</th>
+                        <th>Reasoning</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody id="sfdEstimatedTbody"></tbody>
+                  </table>
+                </div>
+
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ===================================================== -->
+        <!-- Settings Section -->
+        <!-- ===================================================== -->
+        <section id="section-settings" class="section">
+          <div class="section-header">
+            <h2>Configuration</h2>
+            <p>Setup your AI provider and Jira credentials</p>
+          </div>
+
+          <div class="settings-container">
+
+            <!-- AI Provider -->
+            <div class="card">
+              <div class="card-header">
+                <h3>🤖 AI Provider Configuration</h3>
+              </div>
+              <div class="card-body">
+
+                <div class="form-group">
+                  <label for="providerType">Select Provider:</label>
+                  <select id="providerType" class="form-control">
+                    <option value="openai">OpenAI</option>
+                    <option value="azure">Azure OpenAI</option>
+                    <option value="gemini">Google Gemini</option>
+                    <option value="local">Local Provider</option>
+                  </select>
+                </div>
+
+                <!-- OpenAI -->
+                <div id="openai-config" class="provider-config active">
+                  <div class="config-section">
+                    <h4>OpenAI Configuration</h4>
+                    <div class="form-group">
+                      <label for="openaiKey">API Key:</label>
+                      <input type="password" id="openaiKey" class="form-control" placeholder="sk-..." />
+                    </div>
+                    <div class="form-group">
+                      <label for="openaiModel">Model:</label>
+                      <input type="text" id="openaiModel" class="form-control" value="gpt-4o-mini" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Azure -->
+                <div id="azure-config" class="provider-config" style="display:none;">
+                  <div class="config-section">
+                    <h4>Azure OpenAI Configuration</h4>
+                    <div class="form-group">
+                      <label for="azureEndpoint">Endpoint:</label>
+                      <input type="text" id="azureEndpoint" class="form-control" placeholder="https://&lt;resource&gt;.openai.azure.com" />
+                    </div>
+                    <div class="form-group">
+                      <label for="azureKey">API Key:</label>
+                      <input type="password" id="azureKey" class="form-control" placeholder="Your Azure key" />
+                    </div>
+                    <div class="form-group">
+                      <label for="azureDeployment">Deployment Name:</label>
+                      <input type="text" id="azureDeployment" class="form-control" placeholder="e.g., gpt-35-turbo" />
+                    </div>
+                    <div class="form-group">
+                      <label for="azureApiVersion">API Version:</label>
+                      <input type="text" id="azureApiVersion" class="form-control" value="2024-06-01" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Gemini -->
+                <div id="gemini-config" class="provider-config" style="display:none;">
+                  <div class="config-section">
+                    <h4>Google Gemini Configuration</h4>
+                    <div class="form-group">
+                      <label for="geminiKey">API Key:</label>
+                      <input type="password" id="geminiKey" class="form-control" placeholder="Your Gemini API key" />
+                    </div>
+                    <div class="form-group">
+                      <label for="geminiModel">Model:</label>
+                      <input type="text" id="geminiModel" class="form-control" value="gemini-1.5-pro" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Local -->
+                <div id="local-config" class="provider-config" style="display:none;">
+                  <div class="config-section">
+                    <h4>Local Provider Configuration</h4>
+                    <div class="form-group">
+                      <label for="localEndpoint">Endpoint:</label>
+                      <input type="text" id="localEndpoint" class="form-control" placeholder="http://localhost:8080/estimate" />
+                    </div>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Jira -->
+            <div class="card">
+              <div class="card-header">
+                <h3>🔗 Jira Configuration</h3>
+              </div>
+              <div class="card-body">
+                <div class="form-group">
+                  <label for="jiraUrl">Jira Base URL:</label>
+                  <input type="text" id="jiraUrl" class="form-control" placeholder="https://your-jira.atlassian.net" />
+                </div>
+
+                <div class="form-group">
+                  <label for="jiraEmail">Email:</label>
+                  <input type="email" id="jiraEmail" class="form-control" placeholder="your-email@example.com" />
+                </div>
+
+                <div class="form-group">
+                  <label for="jiraToken">API Token:</label>
+                  <input type="password" id="jiraToken" class="form-control" placeholder="Your Jira API token" />
+                </div>
+
+                <button class="btn btn-outline" id="testJiraBtn" type="button">🧪 Test Connection</button>
+                <div id="jiraTestResult" class="test-result"></div>
+              </div>
+            </div>
+
+            <!-- Save -->
+            <div class="card">
+              <div class="card-body">
+                <div class="button-group">
+                  <button class="btn btn-primary btn-lg" id="saveConfigBtn" type="button">💾 Save Configuration</button>
+                  <button class="btn btn-secondary" id="resetConfigBtn" type="button">🔄 Reset to Defaults</button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </section>
+
+        <!-- ===================================================== -->
+        <!-- About Section -->
+        <!-- ===================================================== -->
+        <section id="section-about" class="section">
+          <div class="section-header">
+            <h2>About EffortIQ</h2>
+            <p>Your intelligent effort estimation companion</p>
+          </div>
+
+          <div class="about-container">
+            <div class="card">
+              <div class="card-body">
+                <h3>EffortIQ v1.0.0</h3>
+                <p>A powerful desktop application for intelligent effort estimation and bulk Jira ticket creation.</p>
+
+                <h4 style="margin-top:20px;">Features:</h4>
+                <ul style="margin:10px 0; padding-left:20px; color:var(--text-secondary);">
+                  <li>✅ Excel file upload with CRIM data</li>
+                  <li>✅ AI-powered effort estimation (OpenAI, Azure, Gemini, Local)</li>
+                  <li>✅ Bulk Jira ticket creation</li>
+                  <li>✅ Fetch-only mode for estimation without ticket creation</li>
+                  <li>✅ Graphical UI: donut charts, expandable rows, exports</li>
+                </ul>
+
+                <h4 style="margin-top:20px;">Technology Stack:</h4>
+                <ul style="margin:10px 0; padding-left:20px; color:var(--text-secondary);">
+                  <li>⚡ Electron - Cross-platform desktop app</li>
+                  <li>📊 XLSX - Excel file parsing</li>
+                  <li>🤖 Multiple AI providers integration</li>
+                  <li>🔗 Jira REST API integration</li>
+                </ul>
+
+                <h4 style="margin-top:20px;">Made with ❤️ for Jira Teams</h4>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </div>
+    </main>
+  </div>
+
+  <!-- ===================================================== -->
+  <!-- Detail Modal (WBS + Reasoning) -->
+  <!-- ===================================================== -->
+  <div id="detailModal" class="modal" style="display:none;">
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <div class="modal-title-wrap">
+          <h2 id="detailModalTitle">Details</h2>
+          <div id="detailModalMeta" class="modal-meta"></div>
+        </div>
+        <button class="close-btn" id="detailModalCloseBtn" title="Close">×</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="modal-tabs">
+          <button class="tab-btn active" id="tabWbsBtn" type="button">📊 WBS</button>
+          <button class="tab-btn" id="tabReasonBtn" type="button">🧠 AI Reasoning</button>
+        </div>
+
+        <div id="detailViz" class="detail-viz" style="display:none;">
+          <div class="donut-card">
+            <div class="donut" id="wbsDonut"></div>
+            <div class="donut-center">
+              <div class="donut-total" id="donutTotal">0.0h</div>
+              <div class="donut-sub">Total</div>
+            </div>
+          </div>
+
+          <div class="legend-card">
+            <div class="legend-title">WBS Breakdown</div>
+            <div id="wbsLegend" class="legend"></div>
+          </div>
+        </div>
+
+        <div id="detailModalBody" class="modal-body-content"></div>
+      </div>
+
+      <div class="modal-footer">
+        <div class="footer-left">
+          <button class="btn btn-outline" id="copyDetailsBtn" type="button">📋 Copy</button>
+        </div>
+
+        <div class="footer-right">
+          <button class="btn btn-outline" id="exportWbsCsvBtn" type="button">⬇️ WBS CSV</button>
+          <button class="btn btn-outline" id="exportReasonTxtBtn" type="button">⬇️ Reasoning TXT</button>
+          <button class="btn btn-outline" id="exportRowJsonBtn" type="button">⬇️ Row JSON</button>
+          <button class="btn btn-secondary" id="detailModalCloseBtn2" type="button">Close</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Renderer -->
+  <script src="renderer.js"></script>
+</body>
+</html>
