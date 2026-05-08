@@ -1,24 +1,20 @@
 // src/main/index.js
 // =========================================================
-// EffortIQ - Electron Main Process (FINAL FIXED)
+// EffortIQ - Electron Main Process
+// - Creates BrowserWindow
+// - Registers IPC handlers (excel/config/estimate/sfd/jira)
 // =========================================================
-
-const { app, BrowserWindow, Menu, ipcMain, shell } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain } = require('electron');
 const path = require('path');
 
-// ------------------------------
-// Services (existing structure)
-// ------------------------------
-const { dialog } = require('electron');
 const { excelService } = require('../services/excelService.js');
 const { jiraService } = require('../services/jiraService.js');
 const { configService } = require('../services/configService.js');
 const { estimationEngine } = require('../services/estimationEngine.js');
-const sfdService = require('../services/sfd');
 
-// ------------------------------
-// Window & Menu
-// ------------------------------
+// ✅ NEW: SFD Estimation Engine
+const { sfdEstimationEngine } = require('../services/sfdEstimationEngine.js');
+
 let mainWindow;
 
 function createMenu() {
@@ -46,20 +42,28 @@ function createMenu() {
     },
     {
       label: 'Help',
-      submenu: [{ label: 'About EffortIQ' }],
+      submenu: [
+        {
+          label: 'About EffortIQ',
+          click: () => {
+            // Optional: implement an About dialog
+          },
+        },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
 function createWindow() {
+  const preloadPath = path.join(__dirname, 'preload.js');
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1000,
     minHeight: 700,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: preloadPath,
       nodeIntegration: false,
       contextIsolation: true,
       enableRemoteModule: false,
@@ -67,9 +71,11 @@ function createWindow() {
     icon: path.join(__dirname, '..', '..', 'assets', 'icon.png'),
   });
 
-  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+  const isDev = !app.isPackaged;
+  const rendererHtmlPath = path.join(__dirname, '..', 'renderer', 'index.html');
+  mainWindow.loadFile(rendererHtmlPath);
 
-  if (!app.isPackaged) {
+  if (isDev) {
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   }
 
@@ -81,27 +87,10 @@ function createWindow() {
 }
 
 // =========================================================
-// IPC HANDLERS (MATCHES preload.js EXACTLY)
+// IPC Handlers
 // =========================================================
 
-ipcMain.handle('sfd:browse', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Select SFD Document',
-    properties: ['openFile'],
-    filters: [
-      { name: 'SFD Documents', extensions: ['docx', 'pdf', 'txt', 'md'] }
-    ]
-  });
-
-  if (result.canceled || !result.filePaths.length) {
-    return { ok: false, error: 'No file selected' };
-  }
-
-  return { ok: true, filePath: result.filePaths[0] };
-});
-
-
-// ---------------- Excel ----------------
+// Excel
 ipcMain.handle('excel:parse', async (_event, filePath) => {
   try {
     const data = await excelService.parseExcel(filePath);
@@ -111,7 +100,7 @@ ipcMain.handle('excel:parse', async (_event, filePath) => {
   }
 });
 
-// ---------------- Config ----------------
+// Config
 ipcMain.handle('config:save', async (_event, config) => {
   try {
     await configService.saveConfig(config);
@@ -129,22 +118,39 @@ ipcMain.handle('config:load', async () => {
   }
 });
 
-// ---------------- CRIM Estimation ----------------
+// Estimation (Excel rows)
 ipcMain.handle('estimate:process', async (event, rows, options) => {
   try {
-    const results = await estimationEngine.processRows(
-      rows,
-      options,
-      progress => event.sender.send('estimate:progress', progress)
-    );
+    const results = await estimationEngine.processRows(rows, options, (progress) => {
+      event.sender.send('estimate:progress', progress);
+    });
     return { ok: true, data: results };
   } catch (error) {
     return { ok: false, error: error.message };
   }
 });
 
-// ---------------- Jira (✅ FIXED NAMES) ----------------
-ipcMain.handle('jira:test-connection', async (_event, config) => {
+// ✅ NEW: SFD Estimation (DOCX file)
+ipcMain.handle('sfd:process', async (event, filePath, options) => {
+  try {
+    const resp = await sfdEstimationEngine.processSfdFile(filePath, options, (progress) => {
+      // Reuse same progress channel used by renderer
+      event.sender.send('estimate:progress', {
+        ...progress,
+        // normalize indices for UI if missing
+        index: progress?.index ?? 0,
+        total: progress?.total ?? 0,
+        percent: progress?.percent ?? 0,
+      });
+    });
+    return resp?.ok ? { ok: true, data: resp.data } : { ok: false, error: resp.error || 'SFD estimation failed' };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+// Jira
+ipcMain.handle('jira:testConnection', async (_event, config) => {
   try {
     const result = await jiraService.testConnection(config);
     return { ok: true, data: result };
@@ -153,7 +159,32 @@ ipcMain.handle('jira:test-connection', async (_event, config) => {
   }
 });
 
-ipcMain.handle('jira:list-projects', async (_event, jiraConfig, options) => {
+// Shell / External Links
+ipcMain.handle('shell:openExternal', async (_event, url) => {
+  try {
+    const { shell } = require('electron');
+    if (typeof url !== 'string' || !url.trim()) {
+      return { ok: false, error: 'Invalid URL' };
+    }
+    await shell.openExternal(url);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+// IMPORTANT: supports 3rd argument `options` (crimFieldName, failIfCrimFieldMissing)
+ipcMain.handle('jira:createTickets', async (_event, tickets, jiraConfig, options) => {
+  try {
+    const result = await jiraService.createBulkTickets(tickets, jiraConfig, options);
+    return { ok: true, data: result };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  }
+});
+
+// Jira Project List (for dropdown)
+ipcMain.handle('jira:listProjects', async (_event, jiraConfig, options) => {
   try {
     const result = await jiraService.listProjects(jiraConfig, options);
     return { ok: true, data: result };
@@ -162,70 +193,9 @@ ipcMain.handle('jira:list-projects', async (_event, jiraConfig, options) => {
   }
 });
 
-ipcMain.handle('jira:create-tickets', async (_event, tickets, jiraConfig, options) => {
-  try {
-    const result = await jiraService.createBulkTickets(
-      tickets,
-      jiraConfig,
-      options
-    );
-    return { ok: true, data: result };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-// ---------------- SFD (✅ ADDED) ----------------
-ipcMain.handle('sfd:parse', async (_event, filePath) => {
-  try {
-    return await sfdService.parseSfd(filePath);
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-ipcMain.handle('sfd:extract', async (_event, text, options) => {
-  try {
-    const activities = sfdService.extractActivitiesHeuristic(text, options);
-    return { ok: true, data: activities };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-ipcMain.handle('sfd:classify', async (_event, activities, provider, providerConfig, options) => {
-  try {
-    return await sfdService.classifyActivities(
-      activities,
-      provider,
-      providerConfig,
-      options
-    );
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-ipcMain.handle('sfd:estimate', async (_event, classifiedActivities) => {
-  try {
-    const result = sfdService.estimateActivities(classifiedActivities);
-    return { ok: true, data: result };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-// ---------------- Shell / External ----------------
-ipcMain.handle('shell:open-external', async (_event, url) => {
-  try {
-    await shell.openExternal(url);
-    return { ok: true };
-  } catch (error) {
-    return { ok: false, error: error.message };
-  }
-});
-
-// ---------------- App lifecycle ----------------
+// =========================================================
+// App lifecycle
+// =========================================================
 app.disableHardwareAcceleration();
 
 app.whenReady().then(() => {

@@ -1,76 +1,39 @@
 // src/services/jiraService.js
 // =========================================================
-// EffortIQ Jira Service (Fully Fixed)
+// EffortIQ Jira Service
 // - Test connection
 // - Resolve custom field id by name (dynamic)
 // - Detect Select-list fields and resolve option ids dynamically
 // - Create issues (bulk loop with per-ticket error handling)
 // - List projects for dropdown
+// - ✅ NEW: Upload attachments (SFD DOCX) after issue creation
 // =========================================================
-
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 // Cache: field name => fieldId (per jiraUrl)
 const fieldIdCache = new Map(); // key: `${jiraUrl}::${fieldName}` => fieldId|null
-
 // Cache: fieldId => field definition (per jiraUrl)
 const fieldDefCache = new Map(); // key: `${jiraUrl}::${fieldId}` => fieldDef|null
-
 // Cache: select options (per jiraUrl + fieldId + contextId)
 const fieldOptionsCache = new Map(); // key: `${jiraUrl}::${fieldId}::${contextId}` => Map(lowerValue => optionObj)
-
 // Cache: field contexts (per jiraUrl + fieldId)
 const fieldContextsCache = new Map(); // key: `${jiraUrl}::${fieldId}` => contexts[]
 
-// -----------------------------
-// Helpers
-// -----------------------------
 function normalizeUrl(url) {
   return String(url || '').trim().replace(/\/+$/, '');
 }
-
 function buildAuthHeader(email, token) {
   const raw = `${String(email || '')}:${String(token || '')}`;
   return `Basic ${Buffer.from(raw).toString('base64')}`;
 }
-function toADF(text) {
-   const safe = String(text ?? '').trim();
-   const lines = safe ? safe.split(/\r?\n/) : [''];
-   return {
-     type: 'doc',
-     version: 1,
-     content: lines.map((line) => ({
-       type: 'paragraph',
-       content: [{ type: 'text', text: line }],
-     })),
-   };
- }
- 
-function adfTable(rows) {
-  return {
-    type: 'table',
-    attrs: { isNumberColumnEnabled: false },
-    content: rows.map(r => ({
-      type: 'tableRow',
-      content: r.map(cell => ({
-        type: 'tableCell',
-        content: [{
-          type: 'paragraph',
-          content: [{ type: 'text', text: String(cell) }]
-        }]
-      }))
-    }))
-  };
-}
- 
+
 // -----------------------------
 // Timetracking helpers
 // -----------------------------
-// -----------------------------
-// Timetracking update helpers
-// -----------------------------
 function secondsToDuration(seconds) {
-  const sec = Math.max(0, Math.floor(Number(seconds) || 0));
+  const sec = Math.max(0, Math.floor(Number(seconds || 0)));
   const minutes = Math.round(sec / 60);
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -80,12 +43,10 @@ function secondsToDuration(seconds) {
 }
 
 async function updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds) {
-  const sec = Math.max(0, Math.floor(Number(seconds) || 0));
+  const sec = Math.max(0, Math.floor(Number(seconds || 0)));
   if (!issueKey || sec <= 0) return { ok: true, skipped: true };
-
   const duration = secondsToDuration(sec);
 
-  // Jira Cloud-supported edit structure (string estimates)
   await axios.put(
     `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
     {
@@ -99,113 +60,77 @@ async function updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds) {
     {
       headers: {
         Authorization: authHeader,
-        "Content-Type": "application/json",
-        Accept: "application/json",
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
       },
       timeout: 60000,
     }
   );
-
   return { ok: true, duration };
 }
 
-
 // -----------------------------
-// ADF helpers: text/marks
+// ADF helpers (minimal, same behavior as your existing file)
 // -----------------------------
 function adfText(text, marks = []) {
-  const node = { type: "text", text: String(text ?? "") };
+  const node = { type: 'text', text: String(text ?? '') };
   if (marks.length) node.marks = marks;
   return node;
 }
-
-function markStrong() {
-  return { type: "strong" };
-}
-
-// Atlassian textColor mark uses hex format, e.g. "#97a0af" [2](https://developer.atlassian.com/cloud/jira/platform/apis/document/marks/textColor/)
-function markTextColor(hex) {
-  return { type: "textColor", attrs: { color: hex } };
-}
+function markStrong() { return { type: 'strong' }; }
+function markTextColor(hex) { return { type: 'textColor', attrs: { color: hex } }; }
 
 function paragraphFromTextNodes(textNodes = []) {
-  return { type: "paragraph", content: textNodes.length ? textNodes : [adfText("")] };
+  return { type: 'paragraph', content: textNodes.length ? textNodes : [adfText('')] };
 }
-
-// -----------------------------
-// ADF helpers: table (with tableHeader + background)
-// tableHeader supports attrs.background, colspan/rowspan, etc. [4](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/table_header/)
-// -----------------------------
-function tableHeaderCell(textNodes, backgroundHex = "#1D2B4F") {
+function tableHeaderCell(textNodes, backgroundHex = '#172B4D') {
   return {
-    type: "tableHeader",
+    type: 'tableHeader',
     attrs: { background: backgroundHex },
     content: [paragraphFromTextNodes(textNodes)],
   };
 }
-
 function tableCell(textNodes) {
-  return {
-    type: "tableCell",
-    content: [paragraphFromTextNodes(textNodes)],
-  };
+  return { type: 'tableCell', content: [paragraphFromTextNodes(textNodes)] };
 }
-
 function tableRow(cells) {
-  return { type: "tableRow", content: cells };
+  return { type: 'tableRow', content: cells };
 }
-
 function adfTable(headerCells, bodyRows) {
   return {
-    type: "table",
-    content: [
-      tableRow(headerCells),
-      ...bodyRows.map(r => tableRow(r)),
-    ],
+    type: 'table',
+    content: [tableRow(headerCells), ...bodyRows.map((r) => tableRow(r))],
   };
 }
-
-// -----------------------------
-// Collapsible section inside a table cell using nestedExpand
-// nestedExpand is a container that allows content to be hidden/shown (accordion-like) [3](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/nestedExpand/)
-// It can only be placed within a TableCell or TableHeader [3](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/nestedExpand/)[4](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/table_header/)
-// -----------------------------
 function nestedExpand(title, paragraphs) {
   return {
-    type: "nestedExpand",
-    attrs: { title: String(title ?? "") },
-    content: paragraphs.map(p => ({
-      type: "paragraph",
+    type: 'nestedExpand',
+    attrs: { title: String(title ?? '') },
+    content: paragraphs.map((p) => ({
+      type: 'paragraph',
       content: [adfText(p)],
     })),
   };
 }
 
-// -----------------------------
-// Simple color palette (hex)
-// -----------------------------
+// Simple palette
 const COLORS = {
-  headerBg: "#172B4D",      // deep blue
-  headerText: "#FFFFFF",
-  key: "#4C9AFF",           // blue
-  good: "#36B37E",          // green
-  warn: "#FFAB00",          // amber
-  bad: "#FF5630",           // red
-  neutral: "#97A0AF",       // grey (example hex used in Atlassian docs) [2](https://developer.atlassian.com/cloud/jira/platform/apis/document/marks/textColor/)
+  headerBg: '#172B4D',
+  headerText: '#FFFFFF',
+  key: '#4C9AFF',
+  good: '#36B37E',
+  warn: '#FFAB00',
+  bad: '#FF5630',
+  neutral: '#97A0AF',
 };
-
 function complexityColor(complexity) {
-  const c = String(complexity ?? "").toLowerCase();
-  if (c.includes("very complex") || c === "complex") return COLORS.bad;
-  if (c === "medium") return COLORS.warn;
-  if (c.includes("simple")) return COLORS.good;
+  const c = String(complexity ?? '').toLowerCase();
+  if (c.includes('very complex') || c === 'complex') return COLORS.bad;
+  if (c === 'medium') return COLORS.warn;
+  if (c.includes('simple')) return COLORS.good;
   return COLORS.neutral;
 }
 
-
-// -----------------------------
-// Jira Comment helpers (ADF)
-// -----------------------------
 function buildEstimationCommentADF(ticket) {
   const totalHours =
     Number(ticket?.totalHours) ||
@@ -213,37 +138,28 @@ function buildEstimationCommentADF(ticket) {
       ? Number(ticket.customFields.timeestimate) / 3600
       : 0);
 
-  const complexity = String(ticket?.complexity ?? "N/A");
-  const direction = String(ticket?.direction ?? "N/A");
-  const flow = String(ticket?.flow ?? "N/A");
-  const reasoning = String(ticket?.aiReasoning ?? "").trim() || "No AI reasoning provided.";
+  const complexity = String(ticket?.complexity ?? 'N/A');
+  const direction = String(ticket?.direction ?? 'N/A');
+  const flow = String(ticket?.flow ?? 'N/A');
+  const reasoning =
+    String(ticket?.aiReasoning ?? '').trim() || 'No AI reasoning provided.';
 
-  // -----------------------------
-  // 1) AI Effort Estimate Summary table
-  // -----------------------------
+  // 1) Summary table
   const summaryHeader = [
-    tableHeaderCell([adfText("#", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText("Field", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText("Value", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Field', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Value', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
   ];
-
   const summaryRowsRaw = [
-    ["Complexity", complexity],
-    ["Total Effort (h)", totalHours.toFixed(1)],
-    ["Direction", direction],
-    ["Flow", flow],
+    ['Complexity', complexity],
+    ['Total Effort (h)', totalHours.toFixed(1)],
+    ['Direction', direction],
+    ['Flow', flow],
   ];
-
   const summaryBody = summaryRowsRaw.map(([k, v], idx) => {
-    const isComplexity = k === "Complexity";
-    const isTotal = k.startsWith("Total Effort");
-
-    const valueColor = isComplexity
-      ? complexityColor(v)
-      : isTotal
-        ? COLORS.key
-        : COLORS.neutral;
-
+    const isComplexity = k === 'Complexity';
+    const isTotal = k.startsWith('Total Effort');
+    const valueColor = isComplexity ? complexityColor(v) : isTotal ? COLORS.key : COLORS.neutral;
     return [
       tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
       tableCell([adfText(k, [markStrong(), markTextColor(COLORS.key)])]),
@@ -251,85 +167,58 @@ function buildEstimationCommentADF(ticket) {
     ];
   });
 
-  const summaryTable = adfTable(summaryHeader, summaryBody);
-
-  // -----------------------------
-  // 2) WBS table (numbered)
-  // -----------------------------
+  // 2) WBS table
   const wbsEntries = Object.entries(ticket?.wbs || {})
-    .map(([activity, hrs]) => ({
-      activity: String(activity),
-      hrs: Number(hrs || 0),
-    }))
-    .filter(x => Number.isFinite(x.hrs) && x.hrs > 0);
+    .map(([activity, hrs]) => ({ activity: String(activity), hrs: Number(hrs || 0) }))
+    .filter((x) => Number.isFinite(x.hrs) && x.hrs > 0);
 
   const wbsHeader = [
-    tableHeaderCell([adfText("#", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText("Activity", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText("Effort", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Activity', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Effort', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
   ];
+  const wbsBody = (wbsEntries.length ? wbsEntries : [{ activity: '(No WBS available)', hrs: 0 }]).map((x, idx) => {
+    const effortText = x.hrs ? `${x.hrs.toFixed(1)} h` : '-';
+    const effortColor = x.hrs >= 4 ? COLORS.warn : x.hrs >= 2 ? COLORS.key : COLORS.neutral;
+    return [
+      tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
+      tableCell([adfText(x.activity, [markStrong()])]),
+      tableCell([adfText(effortText, [markStrong(), markTextColor(effortColor)])]),
+    ];
+  });
 
-  const wbsBody = (wbsEntries.length ? wbsEntries : [{ activity: "(No WBS available)", hrs: 0 }])
-    .map((x, idx) => {
-      const effortText = x.hrs ? `${x.hrs.toFixed(1)} h` : "-";
-      const effortColor =
-        x.hrs >= 4 ? COLORS.warn :
-        x.hrs >= 2 ? COLORS.key :
-        COLORS.neutral;
-
-      return [
-        tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
-        tableCell([adfText(x.activity, [markStrong()])]),
-        tableCell([adfText(effortText, [markStrong(), markTextColor(effortColor)])]),
-      ];
-    });
-
-  const wbsTable = adfTable(wbsHeader, wbsBody);
-
-  // -----------------------------
-  // 3) Collapsed AI Reasoning using nestedExpand inside a 1-row table
-  // -----------------------------
+  // 3) Collapsed AI reasoning in nestedExpand inside a table cell
   const reasoningHeader = [
-    tableHeaderCell([adfText("AI Reasoning (click to expand)", [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell(
+      [adfText('AI Reasoning (click to expand)', [markStrong(), markTextColor(COLORS.headerText)])],
+      COLORS.headerBg
+    ),
   ];
-
-  const reasoningBody = [
-    [
-      {
-        type: "tableCell",
-        content: [
-          // nestedExpand must live inside TableCell/TableHeader [3](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/nestedExpand/)[4](https://developer.atlassian.com/cloud/jira/platform/apis/document/nodes/table_header/)
-          nestedExpand("AI Reasoning", [reasoning]),
-        ],
-      },
-    ],
-  ];
-
   const reasoningTable = {
-    type: "table",
-    content: [tableRow(reasoningHeader), ...reasoningBody.map(r => tableRow(r))],
+    type: 'table',
+    content: [
+      tableRow(reasoningHeader),
+      tableRow([
+        {
+          type: 'tableCell',
+          content: [nestedExpand('AI Reasoning', [reasoning])],
+        },
+      ]),
+    ],
   };
 
-  // -----------------------------
-  // Final ADF doc
-  // ADF is used for Jira Cloud rich text fields like comments [1](https://developer.atlassian.com/cloud/jira/platform/apis/document/structure/)[5](https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/)
-  // -----------------------------
   return {
-    type: "doc",
+    type: 'doc',
     version: 1,
     content: [
-      { type: "heading", attrs: { level: 3 }, content: [adfText("AI Effort Estimate Summary", [markStrong()])] },
-      summaryTable,
-
-      { type: "heading", attrs: { level: 3 }, content: [adfText("Work Breakdown Structure", [markStrong()])] },
-      wbsTable,
-
-      // collapsed reasoning section
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('AI Effort Estimate Summary', [markStrong()])] },
+      adfTable(summaryHeader, summaryBody),
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('Work Breakdown Structure', [markStrong()])] },
+      adfTable(wbsHeader, wbsBody),
       reasoningTable,
     ],
   };
 }
-
 
 async function addIssueComment(jiraUrl, authHeader, issueKeyOrId, adfDoc) {
   await axios.post(
@@ -347,18 +236,15 @@ async function addIssueComment(jiraUrl, authHeader, issueKeyOrId, adfDoc) {
   return { ok: true };
 }
 
-function lower(s) {
-  return String(s ?? '').trim().toLowerCase();
-}
-
+// -----------------------------
+// Select field helpers (same behavior)
+// -----------------------------
+function lower(s) { return String(s ?? '').trim().toLowerCase(); }
 function isSelectSingle(fieldDef) {
-  // Most Jira select list (single) appears as schema.type === 'option'
   const type = fieldDef?.schema?.type;
   return type === 'option' || type === 'option-with-child';
 }
-
 function isSelectMulti(fieldDef) {
-  // Multi-select commonly appears as schema.type === 'array' and schema.items === 'option'
   const type = fieldDef?.schema?.type;
   const items = fieldDef?.schema?.items;
   return type === 'array' && (items === 'option' || items === 'option-with-child');
@@ -379,10 +265,8 @@ async function fetchAllFields(jiraUrl, authHeader) {
 async function getFieldDefinition(jiraUrl, authHeader, fieldId) {
   const cacheKey = `${jiraUrl}::${fieldId}`;
   if (fieldDefCache.has(cacheKey)) return fieldDefCache.get(cacheKey);
-
   const all = await fetchAllFields(jiraUrl, authHeader);
   const def = all.find((f) => f?.id === fieldId) || null;
-
   fieldDefCache.set(cacheKey, def);
   return def;
 }
@@ -390,7 +274,6 @@ async function getFieldDefinition(jiraUrl, authHeader, fieldId) {
 async function getFieldContexts(jiraUrl, authHeader, fieldId) {
   const cacheKey = `${jiraUrl}::${fieldId}`;
   if (fieldContextsCache.has(cacheKey)) return fieldContextsCache.get(cacheKey);
-
   const resp = await axios.get(`${jiraUrl}/rest/api/3/field/${fieldId}/context`, {
     headers: {
       Authorization: authHeader,
@@ -399,7 +282,6 @@ async function getFieldContexts(jiraUrl, authHeader, fieldId) {
     },
     timeout: 30000,
   });
-
   const contexts = resp.data?.values || [];
   fieldContextsCache.set(cacheKey, contexts);
   return contexts;
@@ -408,7 +290,6 @@ async function getFieldContexts(jiraUrl, authHeader, fieldId) {
 async function getSelectOptionsMap(jiraUrl, authHeader, fieldId, contextId) {
   const cacheKey = `${jiraUrl}::${fieldId}::${contextId}`;
   if (fieldOptionsCache.has(cacheKey)) return fieldOptionsCache.get(cacheKey);
-
   const resp = await axios.get(
     `${jiraUrl}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
     {
@@ -420,47 +301,32 @@ async function getSelectOptionsMap(jiraUrl, authHeader, fieldId, contextId) {
       timeout: 30000,
     }
   );
-
   const options = resp.data?.values || [];
   const map = new Map();
   for (const opt of options) {
-    // Jira option has: { id, value, disabled, ... }
     const key = lower(opt?.value);
     if (key) map.set(key, opt);
   }
-
   fieldOptionsCache.set(cacheKey, map);
   return map;
 }
 
-/**
- * Try to resolve an option for a select field.
- * Prefers id-based payload: { id: "xxxxx" }
- */
 async function resolveSelectOption(jiraUrl, authHeader, fieldId, desiredValue) {
   const wanted = lower(desiredValue);
   if (!wanted) return null;
-
   const contexts = await getFieldContexts(jiraUrl, authHeader, fieldId);
   if (!contexts.length) return null;
 
-  // In most configurations you will have a single global context.
-  // If multiple contexts exist (per project/issue type), we try them in order.
   for (const ctx of contexts) {
     const contextId = ctx?.id;
     if (!contextId) continue;
-
     const optionsMap = await getSelectOptionsMap(jiraUrl, authHeader, fieldId, contextId);
     const match = optionsMap.get(wanted);
     if (match?.id) return match;
   }
-
   return null;
 }
 
-/**
- * Resolve Jira field id by its display name (cached).
- */
 async function resolveCustomFieldIdByName(jiraConfig, fieldName) {
   const jiraUrl = normalizeUrl(jiraConfig?.url);
   const name = String(fieldName || '').trim();
@@ -481,9 +347,68 @@ async function resolveCustomFieldIdByName(jiraConfig, fieldName) {
   const fields = Array.isArray(resp.data) ? resp.data : [];
   const match = fields.find((f) => f && f.name === name);
   const fieldId = match?.id || null;
-
   fieldIdCache.set(cacheKey, fieldId);
   return fieldId;
+}
+
+// -----------------------------
+// ✅ NEW: Attachment upload (multipart/form-data)
+// -----------------------------
+async function uploadIssueAttachments(jiraUrl, authHeader, issueKey, filePaths = []) {
+  const files = Array.isArray(filePaths) ? filePaths.filter(Boolean) : [];
+  if (!issueKey || files.length === 0) return { ok: true, skipped: true, uploaded: 0 };
+
+  let FormData;
+  try {
+    FormData = require('form-data');
+  } catch (e) {
+    return {
+      ok: false,
+      error: "Missing dependency 'form-data'. Install with: npm i form-data",
+    };
+  }
+
+  const uploaded = [];
+  const errors = [];
+
+  for (const fp of files) {
+    try {
+      if (!fs.existsSync(fp)) {
+        errors.push({ file: fp, error: 'File not found' });
+        continue;
+      }
+
+      const form = new FormData();
+      form.append('file', fs.createReadStream(fp), path.basename(fp));
+
+      const resp = await axios.post(
+        `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}/attachments`,
+        form,
+        {
+          headers: {
+            Authorization: authHeader,
+            Accept: 'application/json',
+            'X-Atlassian-Token': 'no-check',
+            ...form.getHeaders(),
+          },
+          maxBodyLength: Infinity,
+          maxContentLength: Infinity,
+          timeout: 120000,
+        }
+      );
+
+      uploaded.push({ file: fp, response: resp?.data });
+    } catch (e) {
+      const msg =
+        e?.response?.data?.errorMessages?.[0] ||
+        e?.response?.data?.message ||
+        e?.message ||
+        'Attachment upload failed';
+      errors.push({ file: fp, error: msg });
+    }
+  }
+
+  return { ok: errors.length === 0, uploaded: uploaded.length, uploadedFiles: uploaded, errors };
 }
 
 // =========================================================
@@ -501,7 +426,6 @@ const jiraService = {
         },
         timeout: 30000,
       });
-
       return { ok: true, user: response.data.displayName };
     } catch (error) {
       throw new Error(
@@ -514,10 +438,10 @@ const jiraService = {
 
   /**
    * Bulk create tickets (sequential, with per-ticket error collection).
-   *
-   * Renderer calls:
-   *   window.api.jira.createTickets(tickets, jiraConfig, { crimFieldName:'C_CRIM_TYPE', failIfCrimFieldMissing:false })
-   * [1](https://be4you-my.sharepoint.com/personal/pulkit_gupta_bearingpoint_com/Documents/Microsoft%20Copilot%20Chat%20Files/renderer.js)[3](https://be4you-my.sharepoint.com/personal/pulkit_gupta_bearingpoint_com/Documents/Microsoft%20Copilot%20Chat%20Files/index.js)
+   * Supports optional:
+   * - ticket.wbs, ticket.aiReasoning, ticket.totalHours (for comment)
+   * - ticket.customFields.timeestimate (seconds)
+   * - ✅ ticket.attachments: [filePath] (will be uploaded after creation)
    */
   async createBulkTickets(tickets, jiraConfig, options = {}) {
     const jiraUrl = normalizeUrl(jiraConfig?.url);
@@ -527,7 +451,6 @@ const jiraService = {
     if (!jiraUrl || !email || !token) {
       return { ok: false, error: 'Missing Jira configuration (url/email/token)' };
     }
-
     const authHeader = buildAuthHeader(email, token);
     const input = Array.isArray(tickets) ? tickets : [];
 
@@ -553,8 +476,7 @@ const jiraService = {
     if (crimFieldId) {
       try {
         crimFieldDef = await getFieldDefinition(jiraUrl, authHeader, crimFieldId);
-      } catch (e) {
-        // Not fatal unless forced; we can still try value-based payload later
+      } catch {
         crimFieldDef = null;
       }
     }
@@ -570,15 +492,10 @@ const jiraService = {
       const description = String(t.description || '').trim();
 
       if (!projectKey || !summary) {
-        results.push({
-          ok: false,
-          index: i,
-          error: 'Missing required fields: project and summary are mandatory',
-        });
+        results.push({ ok: false, index: i, error: 'Missing required fields: project and summary are mandatory' });
         continue;
       }
 
-      // Renderer sends: customFields.c_crim_type and customFields.timeestimate (seconds) [1](https://be4you-my.sharepoint.com/personal/pulkit_gupta_bearingpoint_com/Documents/Microsoft%20Copilot%20Chat%20Files/renderer.js)
       const customFields = t.customFields || {};
       const crimValue =
         customFields.c_crim_type ??
@@ -593,52 +510,38 @@ const jiraService = {
         project: { key: projectKey },
         issuetype: { name: issueType },
         summary,
-        description: toADF(description),
+        // Keep description as plain text (ADF) - simplest compatibility
+        description: {
+          type: 'doc',
+          version: 1,
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: description }],
+            },
+          ],
+        },
       };
 
-      // Original estimate in seconds
-		  
-		// if (hasSeconds) {
-		  // const sec = Math.floor(seconds);
-		  // fields.timetracking = {
-		    // originalEstimateSeconds: sec,
-		    // remainingEstimateSeconds: sec, // ✅ keep remaining aligned (optional but requested)
-		  // };
-		// }
-
-
-      // 3) Set CRIM field correctly depending on schema
+      // 3) Set CRIM field depending on schema
       if (crimFieldId && crimValue != null && String(crimValue).trim() !== '') {
         const rawVal = String(crimValue).trim();
-
         try {
           if (isSelectSingle(crimFieldDef)) {
-            // Resolve option by value => use { id } (best)
             const opt = await resolveSelectOption(jiraUrl, authHeader, crimFieldId, rawVal);
-            if (opt?.id) {
-              fields[crimFieldId] = { id: opt.id };
-            } else {
-              // Fallback: some Jira configs accept value/name
-              fields[crimFieldId] = { value: rawVal };
-            }
+            fields[crimFieldId] = opt?.id ? { id: opt.id } : { value: rawVal };
           } else if (isSelectMulti(crimFieldDef)) {
-            // Multi-select expects array of option objects
-            // Support comma-separated values in Excel if ever needed.
             const parts = rawVal.split(',').map((x) => x.trim()).filter(Boolean);
             const chosen = [];
             for (const p of parts) {
               const opt = await resolveSelectOption(jiraUrl, authHeader, crimFieldId, p);
-              if (opt?.id) chosen.push({ id: opt.id });
-              else chosen.push({ value: p });
+              chosen.push(opt?.id ? { id: opt.id } : { value: p });
             }
             fields[crimFieldId] = chosen;
           } else {
-            // If it’s not a select field, treat as plain value (text)
             fields[crimFieldId] = rawVal;
           }
-        } catch (_e) {
-          // If option resolution fails, attempt a safe fallback
-          // Select-single fallback:
+        } catch {
           fields[crimFieldId] = { value: rawVal };
         }
       }
@@ -654,55 +557,61 @@ const jiraService = {
           timeout: 60000,
         });
 
-		created += 1;
+        created += 1;
+        const issueKey = resp.data?.key;
 
+        // 5) Update time tracking AFTER creation
+        let estimateStatus = { ok: true };
+        try {
+          if (issueKey && hasSeconds) {
+            estimateStatus = await updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds);
+          }
+        } catch (te) {
+          const payload = te?.response?.data;
+          estimateStatus = {
+            ok: false,
+            error: payload ? JSON.stringify(payload) : (te?.message || 'Estimate update failed'),
+          };
+        }
 
-		const issueKey = resp.data?.key;
+        // 6) Post estimation comment (WBS + Reasoning)
+        let commentStatus = { ok: true };
+        try {
+          const hasWbs = t?.wbs && typeof t.wbs === 'object' && Object.keys(t.wbs).length > 0;
+          const hasReason = String(t?.aiReasoning ?? '').trim().length > 0;
+          if (issueKey && (hasWbs || hasReason)) {
+            const adf = buildEstimationCommentADF(t);
+            commentStatus = await addIssueComment(jiraUrl, authHeader, issueKey, adf);
+          }
+        } catch (ce) {
+          commentStatus = { ok: false, error: ce?.message || 'Failed to add comment' };
+        }
 
-		// ✅ Update time tracking AFTER creation (reliable in Jira Cloud)
-		let estimateStatus = { ok: true };
-		try {
-		  if (issueKey && hasSeconds) {
-			estimateStatus = await updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds);
-		  }
-		} catch (te) {
-		  const payload = te?.response?.data;
-		  estimateStatus = {
-			ok: false,
-			error: payload ? JSON.stringify(payload) : (te?.message || "Estimate update failed"),
-		  };
-		}
+        // ✅ NEW: Upload attachments (if provided)
+        let attachmentStatus = { ok: true, skipped: true, uploaded: 0 };
+        try {
+          const attachments = Array.isArray(t.attachments) ? t.attachments : [];
+          if (issueKey && attachments.length) {
+            attachmentStatus = await uploadIssueAttachments(jiraUrl, authHeader, issueKey, attachments);
+          }
+        } catch (ae) {
+          attachmentStatus = { ok: false, error: ae?.message || 'Attachment upload failed' };
+        }
 
-		// ✅ Post estimation comment: WBS + AI reasoning at the end
-		let commentStatus = { ok: true };
-		
-		try {
-		  // Only comment if we actually have something to post
-		  const hasWbs = t?.wbs && typeof t.wbs === 'object' && Object.keys(t.wbs).length > 0;
-		  const hasReason = String(t?.aiReasoning ?? '').trim().length > 0;
-		  if (issueKey && (hasWbs || hasReason)) {
-			 const adf = buildEstimationCommentADF(t);
-			 //await addIssueComment(jiraUrl, authHeader, issueKey, adf);
-			 
-			 commentStatus = await addIssueComment(jiraUrl, authHeader, issueKey, adf);
-		  }
-		} 
-		catch (ce) {
-		  commentStatus = { ok: false, error: ce?.message || 'Failed to add comment' };
-		}
-		
-		results.push({
-		  ok: true,
-		  index: i,
-		  key: issueKey,
-		  id: resp.data?.id,
-		  self: resp.data?.self,
-		  estimateOk: estimateStatus.ok,
-		  estimateError: estimateStatus.ok ? null : estimateStatus.error,
-		  commentOk: commentStatus.ok,
-		  commentError: commentStatus.ok ? null : commentStatus.error,
-		});
-		
+        results.push({
+          ok: true,
+          index: i,
+          key: issueKey,
+          id: resp.data?.id,
+          self: resp.data?.self,
+          estimateOk: estimateStatus.ok,
+          estimateError: estimateStatus.ok ? null : estimateStatus.error,
+          commentOk: commentStatus.ok,
+          commentError: commentStatus.ok ? null : commentStatus.error,
+          attachmentsOk: attachmentStatus.ok,
+          attachmentsUploaded: attachmentStatus.uploaded ?? 0,
+          attachmentsError: attachmentStatus.ok ? null : (attachmentStatus.error || attachmentStatus.errors),
+        });
       } catch (e) {
         const errPayload = e?.response?.data;
         const firstError =
@@ -711,12 +620,7 @@ const jiraService = {
           (errPayload?.errors ? JSON.stringify(errPayload.errors) : null) ||
           e?.message ||
           'Failed to create issue';
-
-        results.push({
-          ok: false,
-          index: i,
-          error: firstError,
-        });
+        results.push({ ok: false, index: i, error: firstError });
       }
     }
 
@@ -733,7 +637,6 @@ const jiraService = {
   async listProjects(jiraConfig, options = {}) {
     const jiraUrl = normalizeUrl(jiraConfig.url);
     const authHeader = buildAuthHeader(jiraConfig.email, jiraConfig.token);
-
     const maxResults = options.maxResults ?? 200;
     const startAt = options.startAt ?? 0;
 
