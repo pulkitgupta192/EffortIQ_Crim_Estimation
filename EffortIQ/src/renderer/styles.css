@@ -946,3 +946,37 @@ body.modal-open { overflow: hidden; }
   border-left: 3px solid var(--warning-color);
   padding-left: 10px;
 }
+
+/* ============================
+SFD Summary Bar (Final Effort + buttonsspace-between;SFD Summary Bar (Final Effort + buttons)
+  align-items:center;
+  gap:1rem;
+  padding: 1rem 1.25rem;
+  border-radius: 12px;
+  border: 1px solid rgba(99,102,241,0.25);
+  background: rgba(0,0,0,0.22);
+}
+.sfd-summary-title{
+  font-weight: 900;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+.sfd-summary-values{
+  display:flex;
+  align-items:center;
+  gap: 0.75rem;
+}
+.sfd-summary-right{
+  display:flex;
+  align-items:center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+@media (max-width: 760px){
+  .sfd-summary{ flex-direction: column; align-items: flex-start; }
+  .sfd-summary-right{ width:100%; }
+  .sfd-summary-right .btn{ width:100%; justify-content:center; }
+}
+============================ */
+.sfd-summary{
+  display:flex;

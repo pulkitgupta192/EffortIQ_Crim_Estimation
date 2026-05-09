@@ -31,7 +31,7 @@ const docxService = {
         return { ok: false, error: 'Only .docx files are supported for SFD estimation' };
       }
 
-      // ✅ IMPORTANT: pass path to Mammoth
+      // ✅ IMPORTANT: pass filePath to Mammoth
       const result = await mammoth.extractRawText({ path: filePath });
 
       const text = safeTrim(result?.value);

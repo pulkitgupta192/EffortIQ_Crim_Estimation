@@ -1,15 +1,13 @@
 // ============================================
-// EffortIQ - Renderer Process (UI Logic)
-// - XLSX High Level Estimation (unchanged)
-// - SFD: Dev Effort per activity (no per-activity WBS) + single WBS on FINAL row
+// EffortIQ -FD: Activities only in table + single WBS + overall reasoning// EffortIQ - Renderer Process (UI Logic)
 // ============================================
 (() => {
   'use strict';
+
   console.log('[EffortIQ] Renderer loaded');
 
   const DEBUG = localStorage.getItem('effortiq:debug') === '1';
   const log = (...args) => DEBUG && console.log('[EffortIQ]', ...args);
-  const warn = (...args) => DEBUG && console.warn('[EffortIQ]', ...args);
   const errorLog = (...args) => console.error('[EffortIQ]', ...args);
 
   const $ = (id) => document.getElementById(id);
@@ -25,22 +23,22 @@
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+      .replace(/'/g, '&#39;');
   }
 
   let currentConfig = {};
   let uploadedData = [];
-  let previewVirtual = null;
   let estimationResults = [];
   const expandedRows = new Set();
 
   let currentMode = 'xlsx';
   let uploadedFile = null;
-
   let modalActiveRow = null;
   let modalActiveTab = 'wbs';
-
   let progressSubscribed = false;
+
+  // SFD helpers
+  let sfdFinalRow = null;
 
   function showToast(message, type = 'info', duration = 3000) {
     const toast = $('toast');
@@ -67,6 +65,7 @@
     document.querySelectorAll('.section').forEach((s) => s.classList.remove('active'));
     const section = $(`section-${sectionId}`);
     if (section) section.classList.add('active');
+
     document.querySelectorAll('.nav-item').forEach((item) => {
       item.classList.remove('active');
       if (item.dataset.section === sectionId) item.classList.add('active');
@@ -116,33 +115,6 @@
     if (active) { active.classList.add('active'); active.style.display = 'block'; }
   }
 
-  function buildJiraTicketsUrl(jiraBaseUrl, issueKeys = []) {
-    const base = String(jiraBaseUrl ?? '').trim().replace(/\/+$/, '');
-    if (!base || !issueKeys.length) return null;
-    const keys = issueKeys.filter(Boolean).join(',');
-    const jql = `key in (${keys})`;
-    return `${base}/issues/?jql=${encodeURIComponent(jql)}`;
-  }
-
-  function showViewJiraTicketsButton(jiraUrl, issueKeys) {
-    const container = document.getElementById('uploadJiraBtn')?.parentElement;
-    if (!container) return;
-    document.getElementById('viewJiraTicketsBtn')?.remove();
-    const url = buildJiraTicketsUrl(jiraUrl, issueKeys);
-    if (!url) return;
-
-    const btn = document.createElement('button');
-    btn.id = 'viewJiraTicketsBtn';
-    btn.className = 'btn btn-outline';
-    btn.type = 'button';
-    btn.textContent = `🔗 View Jira Tickets (${issueKeys.length})`;
-    btn.addEventListener('click', async () => {
-      const res = await window.api?.shell?.openExternal?.(url);
-      if (!res?.ok) showToast(`❌ Failed to open Jira: ${res?.error || 'Unknown error'}`, 'error', 7000);
-    });
-    container.appendChild(btn);
-  }
-
   function setProjectSelectMessage(message) {
     const select = $('jiraProjectSelect');
     if (!select) return;
@@ -181,7 +153,6 @@
 
     setProjectSelectMessage('Loading projects...');
     const res = await window.api.jira.listProjects(jiraConfig, { maxResults: 200 });
-
     if (!res?.ok) {
       setProjectSelectMessage('Failed to load projects');
       showToast(`❌ Failed to load Jira projects: ${res?.error || 'Unknown error'}`, 'error', 7000);
@@ -235,6 +206,7 @@
   async function loadConfiguration() {
     const result = await window.api.config.load();
     if (!result.ok || !result.data) return;
+
     currentConfig = result.data;
 
     if (currentConfig.provider && $('providerType')) {
@@ -257,6 +229,7 @@
       $('geminiModel') && ($('geminiModel').value = currentConfig.gemini.model || 'gemini-1.5-pro');
     }
     if (currentConfig.local) $('localEndpoint') && ($('localEndpoint').value = currentConfig.local.endpoint || '');
+
     if (currentConfig.jira) {
       $('jiraUrl') && ($('jiraUrl').value = currentConfig.jira.url || '');
       $('jiraEmail') && ($('jiraEmail').value = currentConfig.jira.email || '');
@@ -275,6 +248,7 @@
 
   function applyModeToUI(mode) {
     currentMode = (mode === 'sfd') ? 'sfd' : 'xlsx';
+
     const fileInput = $('fileInput');
     const dropzoneText = $('dropzoneText');
     const dropzoneIcon = $('dropzoneIcon');
@@ -282,9 +256,13 @@
 
     uploadedFile = null;
     uploadedData = [];
-    if (fileInput) fileInput.value = '';
+    sfdFinalRow = null;
 
+    if (fileInput) fileInput.value = '';
     hide($('previewCard'));
+
+    // Hide SFD summary by default
+    hide($('sfdSummaryBar'));
 
     if (currentMode === 'xlsx') {
       if (fileInput) fileInput.accept = '.xlsx,.xls';
@@ -307,115 +285,6 @@
     if (!text) { label.style.display = 'none'; label.textContent = ''; return; }
     label.style.display = 'block';
     label.textContent = text;
-  }
-
-  function displayPreview(data) {
-    const previewCard = $('previewCard');
-    const optionsCard = $('optionsCard');
-
-    if (currentMode !== 'xlsx') {
-      hide(previewCard);
-      show(optionsCard);
-      return;
-    }
-
-    show(previewCard);
-    show(optionsCard);
-
-    if (previewVirtual && typeof previewVirtual.destroy === 'function') previewVirtual.destroy();
-
-    previewVirtual = createVirtualizedPreview({
-      data: Array.isArray(data) ? data : [],
-      wrapper: $('previewTableWrapper') || $('previewTable')?.closest('.table-wrapper'),
-      tbody: $('previewTableBody'),
-      countLabel: $('previewCount'),
-      rowHeight: 56,
-      overscan: 10,
-    });
-
-    previewVirtual.render();
-  }
-
-  function createVirtualizedPreview({ data, wrapper, tbody, countLabel, rowHeight = 56, overscan = 10 }) {
-    if (!wrapper || !tbody) return { render: () => {}, destroy: () => {} };
-    wrapper.classList.add('preview-virtual');
-
-    let lastStart = -1;
-    let ticking = false;
-
-    const topSpacerTr = document.createElement('tr');
-    topSpacerTr.className = 'vspacer';
-    const topSpacerTd = document.createElement('td');
-    topSpacerTd.colSpan = 3;
-    topSpacerTr.appendChild(topSpacerTd);
-
-    const bottomSpacerTr = document.createElement('tr');
-    bottomSpacerTr.className = 'vspacer';
-    const bottomSpacerTd = document.createElement('td');
-    bottomSpacerTd.colSpan = 3;
-    bottomSpacerTr.appendChild(bottomSpacerTd);
-
-    function setCountLabel(startIdx, endIdx, total) {
-      if (!countLabel) return;
-      if (total === 0) { countLabel.textContent = 'No rows found in the file.'; return; }
-      const s = Math.min(startIdx + 1, total);
-      const e = Math.min(endIdx, total);
-      countLabel.textContent = `Showing rows ${s}–${e} of ${total}`;
-    }
-
-    function render() {
-      const total = data.length;
-      const viewportH = wrapper.clientHeight || 300;
-      const scrollTop = wrapper.scrollTop || 0;
-      const visibleCount = Math.ceil(viewportH / rowHeight);
-
-      let start = Math.floor(scrollTop / rowHeight) - overscan;
-      start = Math.max(0, start);
-
-      let end = start + visibleCount + (overscan * 2);
-      end = Math.min(total, end);
-
-      if (start === lastStart && tbody.childNodes.length > 0) { setCountLabel(start, end, total); return; }
-      lastStart = start;
-
-      topSpacerTd.style.height = `${start * rowHeight}px`;
-      bottomSpacerTd.style.height = `${(total - end) * rowHeight}px`;
-
-      const frag = document.createDocumentFragment();
-      frag.appendChild(topSpacerTr);
-
-      for (let i = start; i < end; i++) {
-        const row = data[i] || {};
-        const tr = document.createElement('tr');
-        tr.className = 'preview-row';
-        const summary = escapeHtml(row.summary || '');
-        const crim = escapeHtml(row.crim_type || '');
-        const desc = escapeHtml(String(row.description || '').replace(/\r?\n/g, ' '));
-        tr.innerHTML = `
-          <td>${summary}</td>
-          <td class="preview-desc"><span class="clamp-1">${desc}</span></td>
-          <td>${crim}</td>
-        `;
-        frag.appendChild(tr);
-      }
-
-      frag.appendChild(bottomSpacerTr);
-      tbody.innerHTML = '';
-      tbody.appendChild(frag);
-      setCountLabel(start, end, total);
-    }
-
-    function onScroll() {
-      if (ticking) return;
-      ticking = true;
-      requestAnimationFrame(() => { ticking = false; render(); });
-    }
-
-    const ro = new ResizeObserver(() => render());
-    ro.observe(wrapper);
-    wrapper.addEventListener('scroll', onScroll, { passive: true });
-
-    return { render, destroy: () => { wrapper.removeEventListener('scroll', onScroll); ro.disconnect(); } };
   }
 
   async function handleFileUpload(file) {
@@ -445,7 +314,9 @@
       }
 
       uploadedData = result.data || [];
-      displayPreview(uploadedData);
+      show($('previewCard'));
+      show($('optionsCard'));
+
       showToast(`✅ Loaded ${uploadedData.length} rows`, 'success', 2500);
       addActivityLog(`Loaded ${uploadedData.length} rows`, 'success');
     } else {
@@ -454,6 +325,7 @@
         addActivityLog('Invalid file selected (expected DOCX)', 'error');
         return;
       }
+
       hide($('previewCard'));
       show($('optionsCard'));
       showToast('✅ SFD DOCX selected. Ready to estimate.', 'success', 2500);
@@ -472,6 +344,7 @@
 
       const percent = Number.isFinite(p?.percent) ? p.percent : 0;
       fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+
       const idx = p?.index ?? 0;
       const total = p?.total ?? 0;
       text.textContent = `${p?.message || 'Processing...'} (${idx}/${total}, ${percent}%)`;
@@ -480,183 +353,51 @@
     progressSubscribed = true;
   }
 
-  async function processEstimates() {
-    currentMode = getModeFromUI();
-    const selectedProvider = $('aiProvider')?.value || currentConfig.provider;
+  // -----------------------------
+  // Results rendering
+  // -----------------------------
+  function isSfdActivityRow(row) {
+    return currentMode === 'sfd' && row?.kind === 'sfd_activity';
+  }
+  function isSfdFinalRow(row) {
+    return currentMode === 'sfd' && row?.kind === 'sfd_final';
+  }
 
-    if (!selectedProvider) { showToast('❌ Configure AI provider first (Settings)', 'error', 7000); return; }
-    if (!uploadedFile?.path) { showToast('❌ Upload a file first', 'error', 6000); return; }
+  function setTableHeadersForMode() {
+    const colSno = $('colSno');
+    const colSummary = $('colSummary');
+    const colCrim = $('colCrim');
+    const colComplexity = $('colComplexity');
+    const colEffort = $('colEffort');
+    const colWbs = $('colWbs');
+    const colReason = $('colReason');
+    const colStatus = $('colStatus');
 
-    const estimateOnly = Boolean($('estimateOnly')?.checked);
-    const projectKey = ($('jiraProjectSelect')?.value || '').trim();
-    if (!estimateOnly && !projectKey) { showToast('❌ Select a Jira project', 'error', 6000); return; }
+    if (colSno) colSno.textContent = 'S.No';
 
-    show($('resultsCard'));
-    disable($('processBtn'));
-    hide($('uploadJiraBtn'));
-
-    showToast('⚡ Processing estimates...', 'info', 2000);
-    addActivityLog(`Estimating (${currentMode.toUpperCase()})`, 'info');
-
-    const providerConfig = currentConfig[selectedProvider] || {};
-
-    try {
-      if (currentMode === 'xlsx') {
-        if (!uploadedData?.length) { enable($('processBtn')); showToast('❌ No Excel rows to process', 'error', 6000); return; }
-
-        const result = await window.api.estimate.process(uploadedData, {
-          provider: selectedProvider,
-          config: providerConfig,
-          estimateOnly,
-        });
-
-        enable($('processBtn'));
-
-        if (!result.ok) { showToast(`❌ Estimation failed: ${result.error}`, 'error', 9000); return; }
-
-        estimationResults = result.data || [];
-        expandedRows.clear();
-        displayResults(estimationResults);
-
-        showToast('✅ Estimation completed', 'success', 2000);
-        addActivityLog(`Estimation completed: ${estimationResults.length} items`, 'success');
-
-        const uploadBtn = $('uploadJiraBtn');
-        if (uploadBtn) uploadBtn.style.display = estimateOnly ? 'none' : 'inline-block';
-        return;
-      }
-
-      // SFD mode
-      const pLower = String(selectedProvider).toLowerCase();
-      if (pLower !== 'openai' && pLower !== 'azure') {
-        enable($('processBtn'));
-        showToast('❌ SFD supports only OpenAI or Azure', 'error', 7000);
-        return;
-      }
-
-      const result = await window.api.sfd.process(uploadedFile.path, { provider: selectedProvider, config: providerConfig });
-      enable($('processBtn'));
-
-      if (!result?.ok) { showToast(`❌ SFD estimation failed: ${result?.error || 'Unknown error'}`, 'error', 9000); return; }
-
-      const payload = result.data || {};
-      estimationResults = payload.rows || [];
-      expandedRows.clear();
-      displayResults(estimationResults);
-
-      showToast('✅ SFD estimation completed', 'success', 2500);
-      addActivityLog(`SFD completed: ${payload.successfulActivities ?? 0}/${payload.totalActivities ?? 0} activities`, 'success');
-
-      const uploadBtn = $('uploadJiraBtn');
-      if (uploadBtn) uploadBtn.style.display = estimateOnly ? 'none' : 'inline-block';
-    } catch (e) {
-      enable($('processBtn'));
-      showToast(`❌ Estimation failed: ${e.message}`, 'error', 9000);
+    if (currentMode === 'sfd') {
+      if (colSummary) colSummary.textContent = 'Activity';
+      if (colCrim) colCrim.textContent = 'CRIM Type';
+      if (colComplexity) colComplexity.textContent = 'Complexity';
+      if (colEffort) colEffort.textContent = 'Dev Effort (h)';
+      if (colWbs) colWbs.textContent = 'WBS'; // will be hidden in rows (single button used)
+      if (colReason) colReason.textContent = 'AI Reasoning';
+      if (colStatus) colStatus.textContent = 'Status';
+    } else {
+      if (colSummary) colSummary.textContent = 'Summary';
+      if (colCrim) colCrim.textContent = 'CRIM Type';
+      if (colComplexity) colComplexity.textContent = 'Complexity';
+      if (colEffort) colEffort.textContent = 'Total Effort (h)';
+      if (colWbs) colWbs.textContent = 'WBS';
+      if (colReason) colReason.textContent = 'AI Reasoning';
+      if (colStatus) colStatus.textContent = 'Status';
     }
   }
 
-  function isSfdActivityRow(row) { return currentMode === 'sfd' && row?.kind === 'sfd_activity'; }
-  function isSfdFinalRow(row) { return currentMode === 'sfd' && row?.kind === 'sfd_final'; }
-
-  function getDisplayedEffortHours(row) {
-    // XLSX unchanged: show final
-    if (currentMode !== 'sfd') return Number(row?.finalEffort ?? row?.hours ?? 0);
-
-    // SFD:
-    if (row?.kind === 'sfd_activity') return Number(row?.devEffortHours ?? 0);
-    if (row?.kind === 'sfd_total_dev') return Number(row?.devEffortHours ?? row?.hours ?? 0);
-
-    // FINAL row shows Total Effort
-    return Number(row?.finalEffort ?? row?.hours ?? 0);
-  }
-
-  function setEffortHeaderLabel() {
-    const ths = document.querySelectorAll('#resultsTable thead th');
-    if (!ths || ths.length < 4) return;
-    ths[3].textContent = (currentMode === 'sfd') ? 'Effort (h)' : 'Total Effort (h)';
-  }
-
-  function displayResults(results) {
-    const tbody = $('resultsTableBody');
-    if (!tbody) return;
-
-    tbody.innerHTML = '';
-    setEffortHeaderLabel();
-
-    let completed = 0;
-    let effortShown = 0;
-
-    (results || []).forEach((r, idx) => {
-      const ok = Boolean(r?.ok);
-      const status = ok ? '✅ Done' : `❌ ${r?.error || 'Failed'}`;
-
-      if (ok) { completed += 1; effortShown += getDisplayedEffortHours(r); }
-
-      const summary = r.summary || r.title || 'N/A';
-      const crimType = r.crim_type || r.category || 'N/A';
-      const complexity = ok ? (r.complexity || 'N/A') : 'N/A';
-      const effort = ok ? getDisplayedEffortHours(r) : NaN;
-
-      // WBS button rules:
-      // - XLSX: show as before
-      // - SFD: only FINAL row has WBS
-      let viewWbsCell = '<span class="muted">N/A</span>';
-      if (ok && currentMode !== 'sfd') {
-        viewWbsCell = `<button class="btn btn-mini btn-glass view-btn" data-action="view-wbs" data-idx="${idx}">View WBS</button>`;
-      } else if (ok && isSfdFinalRow(r)) {
-        viewWbsCell = `<button class="btn btn-mini btn-glass view-btn" data-action="view-wbs" data-idx="${idx}">View WBS</button>`;
-      }
-
-      const viewReasonCell = ok
-        ? `<button class="btn btn-mini btn-glass view-btn" data-action="view-reason" data-idx="${idx}">View</button>`
-        : `<span class="muted">N/A</span>`;
-
-      const expandBtn = ok
-        ? `<button class="btn btn-mini btn-outline expand-btn" data-idx="${idx}">${expandedRows.has(idx) ? '▲ Hide' : '▼ Expand'}</button>`
-        : '';
-
-      const tr = document.createElement('tr');
-      tr.className = 'card-row';
-      tr.innerHTML = `
-        <td>${escapeHtml(summary)}</td>
-        <td>${escapeHtml(crimType)}</td>
-        <td><span class="badge">${escapeHtml(complexity)}</span></td>
-        <td><span class="badge badge-strong">${ok ? effort.toFixed(1) : 'N/A'}h</span></td>
-        <td>${viewWbsCell}</td>
-        <td>${viewReasonCell}</td>
-        <td>${escapeHtml(status)} ${expandBtn}</td>
-      `;
-      tbody.appendChild(tr);
-
-      if (expandedRows.has(idx)) {
-        const direction = r?.direction ? `Direction: ${r.direction}` : '';
-        const flow = r?.flow ? `Flow: ${r.flow}` : '';
-        const extra = (direction || flow) ? `\n${direction}\n${flow}` : '';
-
-        const exp = document.createElement('tr');
-        exp.className = 'expand-row';
-        exp.innerHTML = `
-          <td colspan="7">
-            <div class="expand-panel">
-              <div class="expand-title">Quick Summary</div>
-              <div class="expand-meta">
-                <span class="pill">${escapeHtml(crimType)}</span>
-                <span class="pill pill-soft">${escapeHtml(complexity)}</span>
-                <span class="pill pill-strong">${ok ? effort.toFixed(1) : 'N/A'}h</span>
-              </div>
-              <div class="expand-desc">${escapeHtml((r.description || '') + extra)}</div>
-            </div>
-          </td>
-        `;
-        tbody.appendChild(exp);
-      }
-    });
-
-    const progressFill = $('progressFill');
-    const progressText = $('progressText');
-    const percent = results?.length ? (completed / results.length) * 100 : 0;
-    if (progressFill) progressFill.style.width = `${percent}%`;
-    if (progressText) progressText.textContent = `Completed: ${completed}/${results.length} • Effort shown: ${effortShown.toFixed(1)}h`;
+  function formatReasoning(reasoning) {
+    const text = String(reasoning || '').trim();
+    if (!text) return '<div class="empty-state">No reasoning returned by provider.</div>';
+    return `<div class="reason-box">${escapeHtml(text)}</div>`;
   }
 
   function buildDonutGradient(segments) {
@@ -684,8 +425,8 @@
       .filter((x) => x.value > 0);
 
     if (!entries.length) { viz.style.display = 'none'; return; }
-
     viz.style.display = 'grid';
+
     const palette = ['#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#22c55e', '#38bdf8', '#a855f7'];
     const segments = entries.map((e, i) => ({ ...e, color: palette[i % palette.length] }));
     const total = segments.reduce((a, s) => a + s.value, 0);
@@ -706,12 +447,6 @@
     }).join('');
   }
 
-  function formatReasoning(reasoning) {
-    const text = String(reasoning || '').trim();
-    if (!text) return '<div class="empty-state">No reasoning returned by provider.</div>';
-    return `<div class="reason-box">${escapeHtml(text)}</div>`;
-  }
-
   function openDetailModal(kind, row) {
     const modal = $('detailModal');
     const title = $('detailModalTitle');
@@ -728,7 +463,11 @@
     const summary = row?.summary || row?.title || 'Details';
     const crim = row?.crim_type || row?.category || 'N/A';
     const complexity = row?.complexity || 'N/A';
-    const effort = getDisplayedEffortHours(row);
+
+    // effort display depends on row type
+    const effort = (currentMode === 'sfd' && row?.kind === 'sfd_activity')
+      ? Number(row?.devEffortHours || 0)
+      : Number(row?.finalEffort ?? row?.hours ?? 0);
 
     const dir = row?.direction ? `<span class="pill">${escapeHtml(row.direction)}</span>` : '';
     const flw = row?.flow ? `<span class="pill">${escapeHtml(row.flow)}</span>` : '';
@@ -770,20 +509,226 @@
     modalActiveRow = null;
   }
 
+  function updateSfdSummary(finalRow) {
+    const bar = $('sfdSummaryBar');
+    const eff = $('sfdFinalEffortValue');
+    const days = $('sfdFinalEffortDays');
+
+    if (!bar || !eff || !days) return;
+
+    if (!finalRow) {
+      hide(bar);
+      return;
+    }
+
+    const totalHours = Number(finalRow.finalEffort ?? finalRow.hours ?? 0);
+    const md = Number(finalRow.totalEffortDays ?? 0);
+
+    eff.textContent = `${totalHours.toFixed(1)}h`;
+    days.textContent = `${md.toFixed(3)} md`;
+
+    show(bar);
+  }
+
+  function displayResults(results) {
+    const tbody = $('resultsTableBody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '';
+    setTableHeadersForMode();
+
+    if (currentMode === 'sfd') {
+      // ✅ SFD: show only activity rows in table
+      sfdFinalRow = (results || []).find((r) => r?.ok && isSfdFinalRow(r)) || null;
+      updateSfdSummary(sfdFinalRow);
+
+      const activityRows = (results || []).filter((r) => r && isSfdActivityRow(r));
+
+      // Render activity rows with S.No
+      activityRows.forEach((r, idx) => {
+        const ok = Boolean(r?.ok);
+        const status = ok ? '✅ Done' : `❌ ${r?.error || 'Failed'}`;
+
+        const summary = r.summary || r.title || 'N/A';
+        const crimType = r.crim_type || 'N/A';
+        const complexity = ok ? (r.complexity || 'N/A') : 'N/A';
+        const effort = ok ? Number(r.devEffortHours || 0) : NaN;
+
+        const viewWbsCell = '<span class="muted">N/A</span>'; // single button used
+        const viewReasonCell = ok
+          ? `<button class="btn btn-mini btn-glass view-btn" data-action="view-reason" data-idx="${idx}" data-sfd="1">View</button>`
+          : `<span class="muted">N/A</span>`;
+
+        const tr = document.createElement('tr');
+        tr.className = 'card-row';
+        tr.innerHTML = `
+          <td>${idx + 1}</td>
+          <td>${escapeHtml(summary)}</td>
+          <td>${escapeHtml(crimType)}</td>
+          <td><span class="badge">${escapeHtml(complexity)}</span></td>
+          <td><span class="badge badge-strong">${ok ? effort.toFixed(1) : 'N/A'}h</span></td>
+          <td>${viewWbsCell}</td>
+          <td>${viewReasonCell}</td>
+          <td>${escapeHtml(status)}</td>
+        `;
+        tbody.appendChild(tr);
+      });
+
+      // progress footer text
+      const progressText = $('progressText');
+      if (progressText && sfdFinalRow?.ok) {
+        const totalHours = Number(sfdFinalRow.finalEffort ?? sfdFinalRow.hours ?? 0);
+        progressText.textContent = `Completed: ${activityRows.length}/${activityRows.length} • Final Effort: ${totalHours.toFixed(1)}h`;
+      }
+
+      return;
+    }
+
+    // ✅ XLSX: keep behavior same (just add S.No column visually)
+    let completed = 0;
+    let effortShown = 0;
+
+    (results || []).forEach((r, idx) => {
+      const ok = Boolean(r?.ok);
+      const status = ok ? '✅ Done' : `❌ ${r?.error || 'Failed'}`;
+
+      if (ok) {
+        completed += 1;
+        effortShown += Number(r?.finalEffort ?? r?.hours ?? 0);
+      }
+
+      const summary = r.summary || r.title || 'N/A';
+      const crimType = r.crim_type || r.category || 'N/A';
+      const complexity = ok ? (r.complexity || 'N/A') : 'N/A';
+      const effort = ok ? Number(r?.finalEffort ?? r?.hours ?? 0) : NaN;
+
+      const viewWbsCell = ok
+        ? `<button class="btn btn-mini btn-glass view-btn" data-action="view-wbs" data-idx="${idx}">View WBS</button>`
+        : `<span class="muted">N/A</span>`;
+
+      const viewReasonCell = ok
+        ? `<button class="btn btn-mini btn-glass view-btn" data-action="view-reason" data-idx="${idx}">View</button>`
+        : `<span class="muted">N/A</span>`;
+
+      const tr = document.createElement('tr');
+      tr.className = 'card-row';
+      tr.innerHTML = `
+        <td>${idx + 1}</td>
+        <td>${escapeHtml(summary)}</td>
+        <td>${escapeHtml(crimType)}</td>
+        <td><span class="badge">${escapeHtml(complexity)}</span></td>
+        <td><span class="badge badge-strong">${ok ? effort.toFixed(1) : 'N/A'}h</span></td>
+        <td>${viewWbsCell}</td>
+        <td>${viewReasonCell}</td>
+        <td>${escapeHtml(status)}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    const progressFill = $('progressFill');
+    const progressText = $('progressText');
+    const percent = results?.length ? (completed / results.length) * 100 : 0;
+    if (progressFill) progressFill.style.width = `${percent}%`;
+    if (progressText) progressText.textContent = `Completed: ${completed}/${results.length} • Effort shown: ${effortShown.toFixed(1)}h`;
+  }
+
+  async function processEstimates() {
+    currentMode = getModeFromUI();
+
+    const selectedProvider = $('aiProvider')?.value || currentConfig.provider;
+    if (!selectedProvider) { showToast('❌ Configure AI provider first (Settings)', 'error', 7000); return; }
+    if (!uploadedFile?.path) { showToast('❌ Upload a file first', 'error', 6000); return; }
+
+    const estimateOnly = Boolean($('estimateOnly')?.checked);
+    const projectKey = ($('jiraProjectSelect')?.value || '').trim();
+    if (!estimateOnly && !projectKey) { showToast('❌ Select a Jira project', 'error', 6000); return; }
+
+    show($('resultsCard'));
+    disable($('processBtn'));
+    hide($('uploadJiraBtn'));
+
+    // Ensure summary hidden until SFD result is available
+    hide($('sfdSummaryBar'));
+
+    showToast('⚡ Processing estimates...', 'info', 2000);
+    addActivityLog(`Estimating (${currentMode.toUpperCase()})`, 'info');
+
+    const providerConfig = currentConfig[selectedProvider] || {};
+
+    try {
+      if (currentMode === 'xlsx') {
+        if (!uploadedData?.length) {
+          enable($('processBtn'));
+          showToast('❌ No Excel rows to process', 'error', 6000);
+          return;
+        }
+
+        const result = await window.api.estimate.process(uploadedData, {
+          provider: selectedProvider,
+          config: providerConfig,
+          estimateOnly,
+        });
+
+        enable($('processBtn'));
+
+        if (!result.ok) { showToast(`❌ Estimation failed: ${result.error}`, 'error', 9000); return; }
+
+        estimationResults = result.data || [];
+        expandedRows.clear();
+        displayResults(estimationResults);
+
+        showToast('✅ Estimation completed', 'success', 2000);
+        addActivityLog(`Estimation completed: ${estimationResults.length} items`, 'success');
+
+        const uploadBtn = $('uploadJiraBtn');
+        if (uploadBtn) uploadBtn.style.display = estimateOnly ? 'none' : 'inline-block';
+        return;
+      }
+
+      // SFD mode
+      const pLower = String(selectedProvider).toLowerCase();
+      if (pLower !== 'openai' && pLower !== 'azure') {
+        enable($('processBtn'));
+        showToast('❌ SFD supports only OpenAI or Azure', 'error', 7000);
+        return;
+      }
+
+      const result = await window.api.sfd.process(uploadedFile.path, { provider: selectedProvider, config: providerConfig });
+
+      enable($('processBtn'));
+
+      if (!result?.ok) { showToast(`❌ SFD estimation failed: ${result?.error || 'Unknown error'}`, 'error', 9000); return; }
+
+      const payload = result.data || {};
+      estimationResults = payload.rows || [];
+      expandedRows.clear();
+
+      displayResults(estimationResults);
+
+      showToast('✅ SFD estimation completed', 'success', 2500);
+      addActivityLog(`SFD completed: ${payload.successfulActivities ?? 0}/${payload.totalActivities ?? 0} activities`, 'success');
+
+      const uploadBtn = $('uploadJiraBtn');
+      if (uploadBtn) uploadBtn.style.display = estimateOnly ? 'none' : 'inline-block';
+    } catch (e) {
+      enable($('processBtn'));
+      showToast(`❌ Estimation failed: ${e.message}`, 'error', 9000);
+    }
+  }
+
   function findSfdFinalRow(rows) {
     return (rows || []).find((r) => r?.ok && r?.kind === 'sfd_final') || null;
   }
 
   async function uploadToJira() {
     if (!currentConfig.jira?.url) { showToast('❌ Configure Jira in Settings', 'error', 7000); return; }
-
     const projectKey = ($('jiraProjectSelect')?.value || '').trim();
     if (!projectKey) { showToast('❌ Select a Jira project', 'error', 6000); return; }
-
     if (!estimationResults?.length) { showToast('❌ No estimation results to upload', 'error', 6000); return; }
 
     currentMode = getModeFromUI();
     disable($('uploadJiraBtn'));
+
     showToast('📤 Uploading to Jira...', 'info', 2000);
     addActivityLog(`Uploading to ${projectKey} (${currentMode.toUpperCase()})`, 'info');
 
@@ -812,11 +757,11 @@
           };
         });
       } else {
-        // SFD: create ONE ticket from FINAL row and attach DOCX
+        // SFD: create ONE ticket from FINAL row + attach DOCX
         const finalRow = findSfdFinalRow(estimationResults);
         if (!finalRow) {
           enable($('uploadJiraBtn'));
-          showToast('❌ SFD FINAL row not found', 'error', 8000);
+          showToast('❌ SFD FINAL not found', 'error', 8000);
           return;
         }
 
@@ -829,19 +774,22 @@
           issueType: 'Task',
           project: projectKey,
 
-          // For comment builder (Jira service will detect sfdActivities)
+          // For Jira comment builder:
           sfdActivities: finalRow.sfdActivities || [],
           wbs: finalRow.wbs || {},
           aiReasoning: finalRow.reasoning || '',
+
           complexity: finalRow.complexity || 'N/A',
           direction: finalRow.direction || 'N/A',
           flow: finalRow.flow || 'N/A',
+
+          // for mandays display
+          hoursPerDay: finalRow.hoursPerDay || 8,
 
           totalHours,
           customFields: {
             timeestimate: Math.round(totalHours * 3600),
           },
-
           attachments: uploadedFile?.path ? [uploadedFile.path] : [],
         }];
       }
@@ -858,10 +806,6 @@
       const data = res.data;
       if (!data?.ok) { showToast(`❌ Jira upload failed: ${data?.error || 'Unknown error'}`, 'error', 9000); return; }
 
-      const results = data.results || [];
-      const createdKeys = results.filter((r) => r.ok && r.key).map((r) => r.key);
-      if (createdKeys.length) showViewJiraTicketsButton(currentConfig.jira.url, createdKeys);
-
       showToast(`✅ Created ${data.created ?? 0}/${data.total ?? tickets.length} ticket(s)`, 'success', 4000);
       addActivityLog(`Created ${data.created ?? 0}/${data.total ?? tickets.length} Jira ticket(s)`, 'success');
     } catch (e) {
@@ -874,18 +818,24 @@
     hide($('resultsCard'));
     hide($('previewCard'));
     hide($('optionsCard'));
+    hide($('sfdSummaryBar'));
+
     const resultsBody = $('resultsTableBody');
     if (resultsBody) resultsBody.innerHTML = '';
+
     expandedRows.clear();
     modalActiveRow = null;
     modalActiveTab = 'wbs';
     estimationResults = [];
     uploadedData = [];
+    sfdFinalRow = null;
+
     if (resetFile) {
       uploadedFile = null;
       setSelectedFileLabel('');
       if ($('fileInput')) $('fileInput').value = '';
     }
+
     if ($('uploadJiraBtn')) $('uploadJiraBtn').style.display = 'none';
     if ($('progressFill')) $('progressFill').style.width = '0%';
     if ($('progressText')) $('progressText').textContent = 'Processing: 0/0';
@@ -893,6 +843,7 @@
 
   function wireEvents() {
     document.querySelectorAll('.nav-item').forEach((item) => item.addEventListener('click', () => showSection(item.dataset.section)));
+
     $('settingsBtn')?.addEventListener('click', () => showSection('settings'));
     $('uploadExcelBtn')?.addEventListener('click', () => showSection('upload'));
     $('setupConfigBtn')?.addEventListener('click', () => showSection('settings'));
@@ -931,13 +882,24 @@
     });
 
     $('estimationMode')?.addEventListener('change', (e) => applyModeToUI(String(e.target.value || '').toLowerCase() === 'sfd' ? 'sfd' : 'xlsx'));
-    $('processBtn')?.addEventListener('click', processEstimates);
 
+    $('processBtn')?.addEventListener('click', processEstimates);
     $('cancelBtn')?.addEventListener('click', () => resetProcessingUI(true));
     $('newUploadBtn')?.addEventListener('click', () => resetProcessingUI(true));
     $('uploadJiraBtn')?.addEventListener('click', uploadToJira);
 
     $('browseBtn')?.addEventListener('click', () => $('fileInput')?.click());
+
+    // ✅ Single SFD buttons near Export CSV
+    $('sfdViewWbsBtn')?.addEventListener('click', () => {
+      if (sfdFinalRow) openDetailModal('wbs', sfdFinalRow);
+      else showToast('⚠️ Final row not available yet', 'warning', 3000);
+    });
+
+    $('sfdViewOverallReasonBtn')?.addEventListener('click', () => {
+      if (sfdFinalRow) openDetailModal('reason', sfdFinalRow);
+      else showToast('⚠️ Final row not available yet', 'warning', 3000);
+    });
 
     const dropzone = $('dropzone');
     const fileInput = $('fileInput');
@@ -950,36 +912,40 @@
       const f = e.dataTransfer?.files?.[0];
       if (f) handleFileUpload(f);
     });
+
     fileInput?.addEventListener('change', (e) => {
       const f = e.target?.files?.[0];
       if (f) handleFileUpload(f);
     });
 
+    // Row-level view buttons
     $('resultsTableBody')?.addEventListener('click', (e) => {
       const viewBtn = e.target?.closest?.('.view-btn');
-      if (viewBtn) {
-        const action = viewBtn.dataset.action;
-        const idx = Number(viewBtn.dataset.idx);
-        const row = (estimationResults || [])[idx];
+      if (!viewBtn) return;
+
+      const action = viewBtn.dataset.action;
+      const idx = Number(viewBtn.dataset.idx);
+
+      // SFD table index refers to activityRows order, not estimationResults index.
+      if (currentMode === 'sfd' && viewBtn.dataset.sfd === '1') {
+        const activityRows = (estimationResults || []).filter((r) => r && isSfdActivityRow(r));
+        const row = activityRows[idx];
         if (!row) return;
-        if (action === 'view-wbs') openDetailModal('wbs', row);
         if (action === 'view-reason') openDetailModal('reason', row);
         return;
       }
 
-      const expandBtn = e.target?.closest?.('.expand-btn');
-      if (expandBtn) {
-        const idx = Number(expandBtn.dataset.idx);
-        if (expandedRows.has(idx)) expandedRows.delete(idx);
-        else expandedRows.add(idx);
-        displayResults(estimationResults);
-      }
+      const row = (estimationResults || [])[idx];
+      if (!row) return;
+
+      if (action === 'view-wbs') openDetailModal('wbs', row);
+      if (action === 'view-reason') openDetailModal('reason', row);
     });
 
     $('detailModalCloseBtn')?.addEventListener('click', closeDetailModal);
     $('detailModalCloseBtn2')?.addEventListener('click', closeDetailModal);
-
     $('detailModal')?.addEventListener('click', (e) => { if (e.target?.id === 'detailModal') closeDetailModal(); });
+
     $('tabWbsBtn')?.addEventListener('click', () => modalActiveRow && openDetailModal('wbs', modalActiveRow));
     $('tabReasonBtn')?.addEventListener('click', () => modalActiveRow && openDetailModal('reason', modalActiveRow));
   }
@@ -988,11 +954,15 @@
     try {
       wireEvents();
       updateStatus();
+
       const apiReady = await waitForAPI(8000);
       if (!apiReady) showToast('⚠️ Backend not connected. UI in degraded mode.', 'warning', 8000);
+
       bindLiveProgressOnce();
       await loadConfiguration();
+
       applyModeToUI(getModeFromUI());
+
       showToast('👋 Welcome to EffortIQ!', 'info', 1500);
       addActivityLog('Application started', 'info');
     } catch (e) {
@@ -1001,3 +971,4 @@
     }
   });
 })();
+// - XLSX High Level Estimation (unchanged logic)

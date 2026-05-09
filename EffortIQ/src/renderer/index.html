@@ -235,45 +235,59 @@
             </div>
 
             <!-- Step 4: Results -->
-            <div class="card" id="resultsCard" style="display:none;">
-									   
-              <div class="card-header"><h3>✅ Step 4: Results</h3></div>
-					
-              <div class="card-body">
+			<div class="card" id="resultsCard" style="display:none;">
+			  <div class="card-header"><h3>✅ Step 4: Results</h3></div>
+			  <div class="card-body">
 
-                <div class="progress-container" id="progressContainer">
-											
-                  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-						
-                  <p class="progress-text" id="progressText">Processing: 0/0</p>
-                </div>
+				<div class="progress-container" id="progressContainer">
+				  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+				  <p class="progress-text" id="progressText">Processing: 0/0</p>
+				</div>
 
-                <div class="table-wrapper" style="margin-top:20px;">
-                  <table class="data-table" id="resultsTable">
-                    <thead>
-                      <tr>
-                        <th>Summary</th>
-                        <th>CRIM Type</th>
-                        <th>Complexity</th>
-                        <th>Total Effort (h)</th>
-                        <th>WBS</th>
-                        <th>AI Reasoning</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody id="resultsTableBody"></tbody>
-                  </table>
-                </div>
+				<!-- ✅ SFD Summary (shown only in SFD mode) -->
+				<div id="sfdSummaryBar" class="sfd-summary" style="display:none;">
+				  <div class="sfd-summary-left">
+					<div class="sfd-summary-title">Final Effort</div>
+					<div class="sfd-summary-values">
+					  <span class="badge badge-strong" id="sfdFinalEffortValue">0.0h</span>
+					  <span class="pill" id="sfdFinalEffortDays">0.000 md</span>
+					</div>
+				  </div>
+				  <div class="sfd-summary-right">
+					<button class="btn btn-outline" id="sfdViewWbsBtn" type="button">📊 View WBS</button>
+					<button class="btn btn-outline" id="sfdViewOverallReasonBtn" type="button">🧠 Overall AI Reasoning</button>
+				  </div>
+				</div>
 
-                <div class="button-group" style="margin-top:20px;">
-                  <button class="btn btn-outline" id="exportAllJsonBtn" type="button">⬇️ Export All (JSON)</button>
-                  <button class="btn btn-outline" id="exportAllCsvBtn" type="button">⬇️ Export All (CSV)</button>
+				<div class="table-wrapper" style="margin-top:20px;">
+				  <table class="data-table" id="resultsTable">
+					<thead>
+					  <tr>
+						<th id="colSno">S.No</th>
+						<th id="colSummary">Summary</th>
+						<th id="colCrim">CRIM Type</th>
+						<th id="colComplexity">Complexity</th>
+						<th id="colEffort">Total Effort (h)</th>
+						<th id="colWbs">WBS</th>
+						<th id="colReason">AI Reasoning</th>
+						<th id="colStatus">Status</th>
+					  </tr>
+					</thead>
+					<tbody id="resultsTableBody"></tbody>
+				  </table>
+				</div>
 
-                  <button class="btn btn-success btn-lg" id="uploadJiraBtn" style="display:none;">📤 Upload to Jira</button>
-                  <button class="btn btn-secondary" id="newUploadBtn">⬆️ Upload New File</button>
-                </div>
-              </div>
-            </div>
+				<div class="button-group" style="margin-top:20px;">
+				  <button class="btn btn-outline" id="exportAllJsonBtn" type="button">⬇️ Export All (JSON)</button>
+				  <button class="btn btn-outline" id="exportAllCsvBtn" type="button">⬇️ Export All (CSV)</button>
+
+				  <!-- ✅ Keep Upload/New buttons as-is -->
+				  <button class="btn btn-success btn-lg" id="uploadJiraBtn" style="display:none;">📤 Upload to Jira</button>
+				  <button class="btn btn-secondary" id="newUploadBtn">⬆️ Upload New File</button>
+				</div>
+
+			  </div>
+			</div>
 
           </div>
         </section>

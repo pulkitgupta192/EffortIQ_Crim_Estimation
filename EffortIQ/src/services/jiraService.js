@@ -118,111 +118,113 @@ function complexityColor(complexity) {
 
 // ✅ SFD comment builder (your requested structure)
 function buildSfdEstimationCommentADF(ticket) {
+  // ✅ SFD comment builder (UPDATED to your requested structure)// ✅ SFD comment builder (UPDATED to your requested structureimationCommentADF(ticket) {
   const complexity = String(ticket?.complexity ?? 'N/A');
   const direction = String(ticket?.direction ?? 'N/A');
   const flow = String(ticket?.flow ?? 'N/A');
 
+  // Hours per day (for mandays)
+  const hoursPerDay = Number(ticket?.hoursPerDay) > 0 ? Number(ticket.hoursPerDay) : 8;
+
+  // Total hours (Final Effort)
   const totalHours =
     Number(ticket?.totalHours) ||
     (Number(ticket?.customFields?.timeestimate) > 0 ? Number(ticket.customFields.timeestimate) / 3600 : 0);
 
+  const totalMandays = hoursPerDay > 0 ? (totalHours / hoursPerDay) : 0;
+
   const activities = Array.isArray(ticket?.sfdActivities) ? ticket.sfdActivities : [];
   const wbs = ticket?.wbs && typeof ticket.wbs === 'object' ? ticket.wbs : {};
 
+  // Activities rows (S.No + Title + Dev hours)
   const devRows = activities
     .map((a, i) => ({
       idx: i + 1,
       title: String(a?.title ?? '').trim() || `Activity ${i + 1}`,
       dev: Number(a?.devEffortHours ?? 0),
     }))
-    .filter((x) => x.dev >= 0);
+    .filter((x) => Number.isFinite(x.dev) && x.dev >= 0);
 
-  const totalDevEffort = devRows.reduce((s, r) => s + r.dev, 0);
+  const totalDevHours = devRows.reduce((s, r) => s + r.dev, 0);
 
+  // Dev Support from WBS
   const unitTesting = Number(wbs['Unit Testing'] ?? 0);
   const codeReview = Number(wbs['Code Review'] ?? 0);
   const documentation = Number(wbs['Documentation'] ?? 0);
   const codeManagement = Number(wbs['Code Management'] ?? 0);
-
   const totalDevSupport = unitTesting + codeReview + documentation + codeManagement;
-  const finalDevEffort = totalDevEffort + totalDevSupport;
 
-  const e2e = Number(wbs['End-to-End Testing'] ?? 0);
-  const fspec = Number(wbs['Functional Specification'] ?? 0);
+  const totalEffort = totalDevHours + totalDevSupport;
+  const totalEffortMandays = hoursPerDay > 0 ? (totalEffort / hoursPerDay) : 0;
 
-  const totalEffort = Number(
-    wbs['Development'] ?? 0
-  ) + totalDevSupport + e2e + fspec;
+  // Table header as per your screenshot
+  const headerTitle = `WBS - ${String(ticket?.summary ?? 'CRIM / SFD Estimate')}`;
 
-  // 1) Summary table
-  const summaryHeader = [
-    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Field', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Value', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  const mainHeader = [
+    tableHeaderCell([adfText('S.No', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText(headerTitle, [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Hours', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
   ];
-  const summaryRowsRaw = [
-    ['Complexity', complexity],
-    ['Direction', direction],
-    ['Flow', flow],
-    ['Total Effort (h)', totalHours.toFixed(1)],
-  ];
-  const summaryBody = summaryRowsRaw.map(([k, v], idx) => {
-    const isComplexity = k === 'Complexity';
-    const isTotal = k.startsWith('Total Effort');
-    const valueColor = isComplexity ? complexityColor(v) : isTotal ? COLORS.key : COLORS.neutral;
-    return [
-      tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
-      tableCell([adfText(k, [markStrong(), markTextColor(COLORS.key)])]),
-      tableCell([adfText(String(v), [markStrong(), markTextColor(valueColor)])]),
-    ];
-  });
 
-  // 2) Activities table (serial + DEV effort)
-  const actHeader = [
-    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Activity', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Dev Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-  ];
-  const actBody = devRows.map((r) => ([
-    tableCell([adfText(String(r.idx), [markStrong(), markTextColor(COLORS.neutral)])]),
-    tableCell([adfText(r.title, [markStrong()])]),
-    tableCell([adfText(r.dev.toFixed(1), [markStrong(), markTextColor(COLORS.key)])]),
-  ]));
+  const bodyRows = [];
 
-  // Total Dev Effort row
-  actBody.push([
+  // Activities
+  for (const r of devRows) {
+    bodyRows.push([
+      tableCell([adfText(String(r.idx), [markStrong(), markTextColor(COLORS.neutral)])]),
+      tableCell([adfText(r.title, [markStrong()])]),
+      tableCell([adfText(r.dev.toFixed(1), [markStrong(), markTextColor(COLORS.key)])]),
+    ]);
+  }
+
+  // Total Dev Hours
+  bodyRows.push([
     tableCell([adfText('', [])]),
-    tableCell([adfText('Total Dev Effort', [markStrong(), markTextColor(COLORS.good)])]),
-    tableCell([adfText(totalDevEffort.toFixed(1), [markStrong(), markTextColor(COLORS.good)])]),
+    tableCell([adfText('Total Dev Hours', [markStrong(), markTextColor(COLORS.good)])]),
+    tableCell([adfText(totalDevHours.toFixed(1), [markStrong(), markTextColor(COLORS.good)])]),
   ]);
 
-  // 3) Dev Support Activities table
-  const supHeader = [
-    tableHeaderCell([adfText('Dev Support Activities', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-  ];
-  const supBody = [
-    [tableCell([adfText('Code Review', [markStrong()])]), tableCell([adfText(codeReview.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Unit Testing', [markStrong()])]), tableCell([adfText(unitTesting.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Documentation', [markStrong()])]), tableCell([adfText(documentation.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Code Management', [markStrong()])]), tableCell([adfText(codeManagement.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Total Dev Support Activities', [markStrong(), markTextColor(COLORS.good)])]), tableCell([adfText(totalDevSupport.toFixed(1), [markStrong(), markTextColor(COLORS.good)])])],
-    [tableCell([adfText('Final Dev Effort (Dev + Support)', [markStrong(), markTextColor(COLORS.good)])]), tableCell([adfText(finalDevEffort.toFixed(1), [markStrong(), markTextColor(COLORS.good)])])],
+  // Dev Support Activities section rows
+  const nextIndexBase = devRows.length + 1;
+  const supportRows = [
+    { label: 'Peer Code Review', value: codeReview },
+    { label: 'Unit Testing', value: unitTesting },
+    { label: 'Documentation', value: documentation },
+    { label: 'Code Management', value: codeManagement },
   ];
 
-  // 4) Additional section (E2E + FS)
-  const addHeader = [
-    tableHeaderCell([adfText('Additional Activities', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-    tableHeaderCell([adfText('Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
-  ];
-  const addBody = [
-    [tableCell([adfText('End to End Testing', [markStrong()])]), tableCell([adfText(e2e.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Functional Specification', [markStrong()])]), tableCell([adfText(fspec.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
-    [tableCell([adfText('Total Effort', [markStrong(), markTextColor(COLORS.bad)])]), tableCell([adfText(totalEffort.toFixed(1), [markStrong(), markTextColor(COLORS.bad)])])],
-  ];
+  let counter = nextIndexBase;
+  for (const s of supportRows) {
+    bodyRows.push([
+      tableCell([adfText(String(counter++), [markStrong(), markTextColor(COLORS.neutral)])]),
+      tableCell([adfText(s.label, [markStrong()])]),
+      tableCell([adfText(Number(s.value).toFixed(1), [markStrong(), markTextColor(COLORS.key)])]),
+    ]);
+  }
 
-  // 5) Reasoning collapsible
-  const reasoning = String(ticket?.aiReasoning ?? '').trim() || 'No AI reasoning provided.';
+  // Total dev support activities
+  bodyRows.push([
+    tableCell([adfText('', [])]),
+    tableCell([adfText('Total dev support activities', [markStrong(), markTextColor(COLORS.good)])]),
+    tableCell([adfText(totalDevSupport.toFixed(1), [markStrong(), markTextColor(COLORS.good)])]),
+  ]);
+
+  // Total effort
+  bodyRows.push([
+    tableCell([adfText('', [])]),
+    tableCell([adfText('Total effort', [markStrong(), markTextColor(COLORS.bad)])]),
+    tableCell([adfText(totalEffort.toFixed(1), [markStrong(), markTextColor(COLORS.bad)])]),
+  ]);
+
+  // Total effort in mandays
+  bodyRows.push([
+    tableCell([adfText('', [])]),
+    tableCell([adfText('Total effort in Mandays', [markStrong(), markTextColor(COLORS.bad)])]),
+    tableCell([adfText(totalEffortMandays.toFixed(3), [markStrong(), markTextColor(COLORS.bad)])]),
+  ]);
+
+  // Overall reasoning collapsible
+  const reasoning = String(ticket?.aiReasoning ?? ticket?.reasoning ?? '').trim() || 'No overall AI reasoning provided.';
   const reasoningHeader = [
     tableHeaderCell([adfText('AI Reasoning (click to expand)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
   ];
@@ -241,22 +243,21 @@ function buildSfdEstimationCommentADF(ticket) {
     type: 'doc',
     version: 1,
     content: [
-      { type: 'heading', attrs: { level: 3 }, content: [adfText('SFD Estimate Summary', [markStrong()])] },
-      adfTable(summaryHeader, summaryBody),
-
-      { type: 'heading', attrs: { level: 3 }, content: [adfText('Activities (Dev Effort)', [markStrong()])] },
-      adfTable(actHeader, actBody),
-
-      { type: 'heading', attrs: { level: 3 }, content: [adfText('Dev Support Activities', [markStrong()])] },
-      adfTable(supHeader, supBody),
-
-      { type: 'heading', attrs: { level: 3 }, content: [adfText('Additional Activities', [markStrong()])] },
-      adfTable(addHeader, addBody),
-
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('SFD Estimate', [markStrong()])] },
+      paragraphFromTextNodes([
+        adfText('Complexity: ', [markStrong(), markTextColor(COLORS.key)]),
+        adfText(complexity, [markStrong(), markTextColor(complexityColor(complexity))]),
+        adfText('   Direction: ', [markStrong(), markTextColor(COLORS.key)]),
+        adfText(direction, [markStrong(), markTextColor(COLORS.neutral)]),
+        adfText('   Flow: ', [markStrong(), markTextColor(COLORS.key)]),
+        adfText(flow, [markStrong(), markTextColor(COLORS.neutral)]),
+      ]),
+      adfTable(mainHeader, bodyRows),
       reasoningTable,
     ],
   };
 }
+
 
 // Existing XLSX comment builder remains as-is
 function buildStandardEstimationCommentADF(ticket) {
