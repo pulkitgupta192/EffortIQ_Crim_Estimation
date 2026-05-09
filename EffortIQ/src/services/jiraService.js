@@ -5,27 +5,28 @@
 // - Resolve custom field id by name (dynamic)
 // - Detect Select-list fields and resolve option ids dynamically
 // - Create issues (bulk loop with per-ticket error handling)
-// - List projects for dropdown
-// - ✅ NEW: Upload attachments (SFD DOCX) after issue creation
+// - List projects
+// - Upload attachments (SFD DOCX) after issue creation
+// - ✅ SFD comment: activities dev effort + totals + WBS summary
 // =========================================================
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 
 // Cache: field name => fieldId (per jiraUrl)
-const fieldIdCache = new Map(); // key: `${jiraUrl}::${fieldName}` => fieldId|null
+const fieldIdCache = new Map();
 // Cache: fieldId => field definition (per jiraUrl)
-const fieldDefCache = new Map(); // key: `${jiraUrl}::${fieldId}` => fieldDef|null
+const fieldDefCache = new Map();
 // Cache: select options (per jiraUrl + fieldId + contextId)
-const fieldOptionsCache = new Map(); // key: `${jiraUrl}::${fieldId}::${contextId}` => Map(lowerValue => optionObj)
+const fieldOptionsCache = new Map();
 // Cache: field contexts (per jiraUrl + fieldId)
-const fieldContextsCache = new Map(); // key: `${jiraUrl}::${fieldId}` => contexts[]
+const fieldContextsCache = new Map();
 
 function normalizeUrl(url) {
-  return String(url || '').trim().replace(/\/+$/, '');
+  return String(url ?? '').trim().replace(/\/+$/, '');
 }
 function buildAuthHeader(email, token) {
-  const raw = `${String(email || '')}:${String(token || '')}`;
+  const raw = `${String(email ?? '')}:${String(token ?? '')}`;
   return `Basic ${Buffer.from(raw).toString('base64')}`;
 }
 
@@ -33,7 +34,7 @@ function buildAuthHeader(email, token) {
 // Timetracking helpers
 // -----------------------------
 function secondsToDuration(seconds) {
-  const sec = Math.max(0, Math.floor(Number(seconds || 0)));
+  const sec = Math.max(0, Math.floor(Number(seconds ?? 0)));
   const minutes = Math.round(sec / 60);
   const h = Math.floor(minutes / 60);
   const m = minutes % 60;
@@ -43,7 +44,7 @@ function secondsToDuration(seconds) {
 }
 
 async function updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds) {
-  const sec = Math.max(0, Math.floor(Number(seconds || 0)));
+  const sec = Math.max(0, Math.floor(Number(seconds ?? 0)));
   if (!issueKey || sec <= 0) return { ok: true, skipped: true };
   const duration = secondsToDuration(sec);
 
@@ -51,10 +52,7 @@ async function updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds) {
     `${jiraUrl}/rest/api/3/issue/${encodeURIComponent(issueKey)}`,
     {
       fields: {
-        timetracking: {
-          originalEstimate: duration,
-          remainingEstimate: duration,
-        },
+        timetracking: { originalEstimate: duration, remainingEstimate: duration },
       },
     },
     {
@@ -70,7 +68,7 @@ async function updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds) {
 }
 
 // -----------------------------
-// ADF helpers (minimal, same behavior as your existing file)
+// ADF helpers (minimal)
 // -----------------------------
 function adfText(text, marks = []) {
   const node = { type: 'text', text: String(text ?? '') };
@@ -79,41 +77,27 @@ function adfText(text, marks = []) {
 }
 function markStrong() { return { type: 'strong' }; }
 function markTextColor(hex) { return { type: 'textColor', attrs: { color: hex } }; }
-
 function paragraphFromTextNodes(textNodes = []) {
   return { type: 'paragraph', content: textNodes.length ? textNodes : [adfText('')] };
 }
 function tableHeaderCell(textNodes, backgroundHex = '#172B4D') {
-  return {
-    type: 'tableHeader',
-    attrs: { background: backgroundHex },
-    content: [paragraphFromTextNodes(textNodes)],
-  };
+  return { type: 'tableHeader', attrs: { background: backgroundHex }, content: [paragraphFromTextNodes(textNodes)] };
 }
 function tableCell(textNodes) {
   return { type: 'tableCell', content: [paragraphFromTextNodes(textNodes)] };
 }
-function tableRow(cells) {
-  return { type: 'tableRow', content: cells };
-}
+function tableRow(cells) { return { type: 'tableRow', content: cells }; }
 function adfTable(headerCells, bodyRows) {
-  return {
-    type: 'table',
-    content: [tableRow(headerCells), ...bodyRows.map((r) => tableRow(r))],
-  };
+  return { type: 'table', content: [tableRow(headerCells), ...bodyRows.map((r) => tableRow(r))] };
 }
 function nestedExpand(title, paragraphs) {
   return {
     type: 'nestedExpand',
     attrs: { title: String(title ?? '') },
-    content: paragraphs.map((p) => ({
-      type: 'paragraph',
-      content: [adfText(p)],
-    })),
+    content: paragraphs.map((p) => ({ type: 'paragraph', content: [adfText(p)] })),
   };
 }
 
-// Simple palette
 const COLORS = {
   headerBg: '#172B4D',
   headerText: '#FFFFFF',
@@ -123,6 +107,7 @@ const COLORS = {
   bad: '#FF5630',
   neutral: '#97A0AF',
 };
+
 function complexityColor(complexity) {
   const c = String(complexity ?? '').toLowerCase();
   if (c.includes('very complex') || c === 'complex') return COLORS.bad;
@@ -131,20 +116,159 @@ function complexityColor(complexity) {
   return COLORS.neutral;
 }
 
-function buildEstimationCommentADF(ticket) {
+// ✅ SFD comment builder (your requested structure)
+function buildSfdEstimationCommentADF(ticket) {
+  const complexity = String(ticket?.complexity ?? 'N/A');
+  const direction = String(ticket?.direction ?? 'N/A');
+  const flow = String(ticket?.flow ?? 'N/A');
+
   const totalHours =
     Number(ticket?.totalHours) ||
-    (Number(ticket?.customFields?.timeestimate) > 0
-      ? Number(ticket.customFields.timeestimate) / 3600
-      : 0);
+    (Number(ticket?.customFields?.timeestimate) > 0 ? Number(ticket.customFields.timeestimate) / 3600 : 0);
+
+  const activities = Array.isArray(ticket?.sfdActivities) ? ticket.sfdActivities : [];
+  const wbs = ticket?.wbs && typeof ticket.wbs === 'object' ? ticket.wbs : {};
+
+  const devRows = activities
+    .map((a, i) => ({
+      idx: i + 1,
+      title: String(a?.title ?? '').trim() || `Activity ${i + 1}`,
+      dev: Number(a?.devEffortHours ?? 0),
+    }))
+    .filter((x) => x.dev >= 0);
+
+  const totalDevEffort = devRows.reduce((s, r) => s + r.dev, 0);
+
+  const unitTesting = Number(wbs['Unit Testing'] ?? 0);
+  const codeReview = Number(wbs['Code Review'] ?? 0);
+  const documentation = Number(wbs['Documentation'] ?? 0);
+  const codeManagement = Number(wbs['Code Management'] ?? 0);
+
+  const totalDevSupport = unitTesting + codeReview + documentation + codeManagement;
+  const finalDevEffort = totalDevEffort + totalDevSupport;
+
+  const e2e = Number(wbs['End-to-End Testing'] ?? 0);
+  const fspec = Number(wbs['Functional Specification'] ?? 0);
+
+  const totalEffort = Number(
+    wbs['Development'] ?? 0
+  ) + totalDevSupport + e2e + fspec;
+
+  // 1) Summary table
+  const summaryHeader = [
+    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Field', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Value', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  ];
+  const summaryRowsRaw = [
+    ['Complexity', complexity],
+    ['Direction', direction],
+    ['Flow', flow],
+    ['Total Effort (h)', totalHours.toFixed(1)],
+  ];
+  const summaryBody = summaryRowsRaw.map(([k, v], idx) => {
+    const isComplexity = k === 'Complexity';
+    const isTotal = k.startsWith('Total Effort');
+    const valueColor = isComplexity ? complexityColor(v) : isTotal ? COLORS.key : COLORS.neutral;
+    return [
+      tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
+      tableCell([adfText(k, [markStrong(), markTextColor(COLORS.key)])]),
+      tableCell([adfText(String(v), [markStrong(), markTextColor(valueColor)])]),
+    ];
+  });
+
+  // 2) Activities table (serial + DEV effort)
+  const actHeader = [
+    tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Activity', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Dev Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  ];
+  const actBody = devRows.map((r) => ([
+    tableCell([adfText(String(r.idx), [markStrong(), markTextColor(COLORS.neutral)])]),
+    tableCell([adfText(r.title, [markStrong()])]),
+    tableCell([adfText(r.dev.toFixed(1), [markStrong(), markTextColor(COLORS.key)])]),
+  ]));
+
+  // Total Dev Effort row
+  actBody.push([
+    tableCell([adfText('', [])]),
+    tableCell([adfText('Total Dev Effort', [markStrong(), markTextColor(COLORS.good)])]),
+    tableCell([adfText(totalDevEffort.toFixed(1), [markStrong(), markTextColor(COLORS.good)])]),
+  ]);
+
+  // 3) Dev Support Activities table
+  const supHeader = [
+    tableHeaderCell([adfText('Dev Support Activities', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  ];
+  const supBody = [
+    [tableCell([adfText('Code Review', [markStrong()])]), tableCell([adfText(codeReview.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Unit Testing', [markStrong()])]), tableCell([adfText(unitTesting.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Documentation', [markStrong()])]), tableCell([adfText(documentation.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Code Management', [markStrong()])]), tableCell([adfText(codeManagement.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Total Dev Support Activities', [markStrong(), markTextColor(COLORS.good)])]), tableCell([adfText(totalDevSupport.toFixed(1), [markStrong(), markTextColor(COLORS.good)])])],
+    [tableCell([adfText('Final Dev Effort (Dev + Support)', [markStrong(), markTextColor(COLORS.good)])]), tableCell([adfText(finalDevEffort.toFixed(1), [markStrong(), markTextColor(COLORS.good)])])],
+  ];
+
+  // 4) Additional section (E2E + FS)
+  const addHeader = [
+    tableHeaderCell([adfText('Additional Activities', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+    tableHeaderCell([adfText('Effort (h)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  ];
+  const addBody = [
+    [tableCell([adfText('End to End Testing', [markStrong()])]), tableCell([adfText(e2e.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Functional Specification', [markStrong()])]), tableCell([adfText(fspec.toFixed(1), [markStrong(), markTextColor(COLORS.key)])])],
+    [tableCell([adfText('Total Effort', [markStrong(), markTextColor(COLORS.bad)])]), tableCell([adfText(totalEffort.toFixed(1), [markStrong(), markTextColor(COLORS.bad)])])],
+  ];
+
+  // 5) Reasoning collapsible
+  const reasoning = String(ticket?.aiReasoning ?? '').trim() || 'No AI reasoning provided.';
+  const reasoningHeader = [
+    tableHeaderCell([adfText('AI Reasoning (click to expand)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
+  ];
+  const reasoningTable = {
+    type: 'table',
+    content: [
+      tableRow(reasoningHeader),
+      tableRow([{
+        type: 'tableCell',
+        content: [nestedExpand('AI Reasoning', [reasoning])],
+      }]),
+    ],
+  };
+
+  return {
+    type: 'doc',
+    version: 1,
+    content: [
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('SFD Estimate Summary', [markStrong()])] },
+      adfTable(summaryHeader, summaryBody),
+
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('Activities (Dev Effort)', [markStrong()])] },
+      adfTable(actHeader, actBody),
+
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('Dev Support Activities', [markStrong()])] },
+      adfTable(supHeader, supBody),
+
+      { type: 'heading', attrs: { level: 3 }, content: [adfText('Additional Activities', [markStrong()])] },
+      adfTable(addHeader, addBody),
+
+      reasoningTable,
+    ],
+  };
+}
+
+// Existing XLSX comment builder remains as-is
+function buildStandardEstimationCommentADF(ticket) {
+  const totalHours =
+    Number(ticket?.totalHours) ||
+    (Number(ticket?.customFields?.timeestimate) > 0 ? Number(ticket.customFields.timeestimate) / 3600 : 0);
 
   const complexity = String(ticket?.complexity ?? 'N/A');
   const direction = String(ticket?.direction ?? 'N/A');
   const flow = String(ticket?.flow ?? 'N/A');
-  const reasoning =
-    String(ticket?.aiReasoning ?? '').trim() || 'No AI reasoning provided.';
+  const reasoning = String(ticket?.aiReasoning ?? '').trim() || 'No AI reasoning provided.';
 
-  // 1) Summary table
   const summaryHeader = [
     tableHeaderCell([adfText('#', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
     tableHeaderCell([adfText('Field', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
@@ -163,13 +287,12 @@ function buildEstimationCommentADF(ticket) {
     return [
       tableCell([adfText(String(idx + 1), [markStrong(), markTextColor(COLORS.neutral)])]),
       tableCell([adfText(k, [markStrong(), markTextColor(COLORS.key)])]),
-      tableCell([adfText(v, [markStrong(), markTextColor(valueColor)])]),
+      tableCell([adfText(String(v), [markStrong(), markTextColor(valueColor)])]),
     ];
   });
 
-  // 2) WBS table
-  const wbsEntries = Object.entries(ticket?.wbs || {})
-    .map(([activity, hrs]) => ({ activity: String(activity), hrs: Number(hrs || 0) }))
+  const wbsEntries = Object.entries(ticket?.wbs ?? {})
+    .map(([activity, hrs]) => ({ activity: String(activity), hrs: Number(hrs ?? 0) }))
     .filter((x) => Number.isFinite(x.hrs) && x.hrs > 0);
 
   const wbsHeader = [
@@ -187,23 +310,17 @@ function buildEstimationCommentADF(ticket) {
     ];
   });
 
-  // 3) Collapsed AI reasoning in nestedExpand inside a table cell
   const reasoningHeader = [
-    tableHeaderCell(
-      [adfText('AI Reasoning (click to expand)', [markStrong(), markTextColor(COLORS.headerText)])],
-      COLORS.headerBg
-    ),
+    tableHeaderCell([adfText('AI Reasoning (click to expand)', [markStrong(), markTextColor(COLORS.headerText)])], COLORS.headerBg),
   ];
   const reasoningTable = {
     type: 'table',
     content: [
       tableRow(reasoningHeader),
-      tableRow([
-        {
-          type: 'tableCell',
-          content: [nestedExpand('AI Reasoning', [reasoning])],
-        },
-      ]),
+      tableRow([{
+        type: 'tableCell',
+        content: [nestedExpand('AI Reasoning', [reasoning])],
+      }]),
     ],
   };
 
@@ -237,7 +354,7 @@ async function addIssueComment(jiraUrl, authHeader, issueKeyOrId, adfDoc) {
 }
 
 // -----------------------------
-// Select field helpers (same behavior)
+// Select field helpers
 // -----------------------------
 function lower(s) { return String(s ?? '').trim().toLowerCase(); }
 function isSelectSingle(fieldDef) {
@@ -274,6 +391,7 @@ async function getFieldDefinition(jiraUrl, authHeader, fieldId) {
 async function getFieldContexts(jiraUrl, authHeader, fieldId) {
   const cacheKey = `${jiraUrl}::${fieldId}`;
   if (fieldContextsCache.has(cacheKey)) return fieldContextsCache.get(cacheKey);
+
   const resp = await axios.get(`${jiraUrl}/rest/api/3/field/${fieldId}/context`, {
     headers: {
       Authorization: authHeader,
@@ -282,6 +400,7 @@ async function getFieldContexts(jiraUrl, authHeader, fieldId) {
     },
     timeout: 30000,
   });
+
   const contexts = resp.data?.values || [];
   fieldContextsCache.set(cacheKey, contexts);
   return contexts;
@@ -290,17 +409,16 @@ async function getFieldContexts(jiraUrl, authHeader, fieldId) {
 async function getSelectOptionsMap(jiraUrl, authHeader, fieldId, contextId) {
   const cacheKey = `${jiraUrl}::${fieldId}::${contextId}`;
   if (fieldOptionsCache.has(cacheKey)) return fieldOptionsCache.get(cacheKey);
-  const resp = await axios.get(
-    `${jiraUrl}/rest/api/3/field/${fieldId}/context/${contextId}/option`,
-    {
-      headers: {
-        Authorization: authHeader,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      timeout: 30000,
-    }
-  );
+
+  const resp = await axios.get(`${jiraUrl}/rest/api/3/field/${fieldId}/context/${contextId}/option`, {
+    headers: {
+      Authorization: authHeader,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    timeout: 30000,
+  });
+
   const options = resp.data?.values || [];
   const map = new Map();
   for (const opt of options) {
@@ -314,6 +432,7 @@ async function getSelectOptionsMap(jiraUrl, authHeader, fieldId, contextId) {
 async function resolveSelectOption(jiraUrl, authHeader, fieldId, desiredValue) {
   const wanted = lower(desiredValue);
   if (!wanted) return null;
+
   const contexts = await getFieldContexts(jiraUrl, authHeader, fieldId);
   if (!contexts.length) return null;
 
@@ -329,7 +448,7 @@ async function resolveSelectOption(jiraUrl, authHeader, fieldId, desiredValue) {
 
 async function resolveCustomFieldIdByName(jiraConfig, fieldName) {
   const jiraUrl = normalizeUrl(jiraConfig?.url);
-  const name = String(fieldName || '').trim();
+  const name = String(fieldName ?? '').trim();
   if (!jiraUrl || !name) return null;
 
   const cacheKey = `${jiraUrl}::${name}`;
@@ -352,20 +471,16 @@ async function resolveCustomFieldIdByName(jiraConfig, fieldName) {
 }
 
 // -----------------------------
-// ✅ NEW: Attachment upload (multipart/form-data)
+// Attachment upload
 // -----------------------------
 async function uploadIssueAttachments(jiraUrl, authHeader, issueKey, filePaths = []) {
   const files = Array.isArray(filePaths) ? filePaths.filter(Boolean) : [];
   if (!issueKey || files.length === 0) return { ok: true, skipped: true, uploaded: 0 };
 
   let FormData;
-  try {
-    FormData = require('form-data');
-  } catch (e) {
-    return {
-      ok: false,
-      error: "Missing dependency 'form-data'. Install with: npm i form-data",
-    };
+  try { FormData = require('form-data'); }
+  catch (e) {
+    return { ok: false, error: "Missing dependency 'form-data'. Install with: npm i form-data" };
   }
 
   const uploaded = [];
@@ -373,11 +488,7 @@ async function uploadIssueAttachments(jiraUrl, authHeader, issueKey, filePaths =
 
   for (const fp of files) {
     try {
-      if (!fs.existsSync(fp)) {
-        errors.push({ file: fp, error: 'File not found' });
-        continue;
-      }
-
+      if (!fs.existsSync(fp)) { errors.push({ file: fp, error: 'File not found' }); continue; }
       const form = new FormData();
       form.append('file', fs.createReadStream(fp), path.basename(fp));
 
@@ -396,14 +507,13 @@ async function uploadIssueAttachments(jiraUrl, authHeader, issueKey, filePaths =
           timeout: 120000,
         }
       );
-
       uploaded.push({ file: fp, response: resp?.data });
     } catch (e) {
       const msg =
-        e?.response?.data?.errorMessages?.[0] ||
-        e?.response?.data?.message ||
-        e?.message ||
-        'Attachment upload failed';
+        e?.response?.data?.errorMessages?.[0]
+        || e?.response?.data?.message
+        || e?.message
+        || 'Attachment upload failed';
       errors.push({ file: fp, error: msg });
     }
   }
@@ -429,56 +539,34 @@ const jiraService = {
       return { ok: true, user: response.data.displayName };
     } catch (error) {
       throw new Error(
-        error?.response?.data?.errorMessages?.[0] ||
-          error?.response?.data?.message ||
-          error.message
+        error?.response?.data?.errorMessages?.[0]
+        || error?.response?.data?.message
+        || error.message
       );
     }
   },
 
-  /**
-   * Bulk create tickets (sequential, with per-ticket error collection).
-   * Supports optional:
-   * - ticket.wbs, ticket.aiReasoning, ticket.totalHours (for comment)
-   * - ticket.customFields.timeestimate (seconds)
-   * - ✅ ticket.attachments: [filePath] (will be uploaded after creation)
-   */
   async createBulkTickets(tickets, jiraConfig, options = {}) {
     const jiraUrl = normalizeUrl(jiraConfig?.url);
     const email = jiraConfig?.email;
     const token = jiraConfig?.token;
+    if (!jiraUrl || !email || !token) return { ok: false, error: 'Missing Jira configuration (url/email/token)' };
 
-    if (!jiraUrl || !email || !token) {
-      return { ok: false, error: 'Missing Jira configuration (url/email/token)' };
-    }
     const authHeader = buildAuthHeader(email, token);
     const input = Array.isArray(tickets) ? tickets : [];
-
     const crimFieldName = options?.crimFieldName || 'C_CRIM_TYPE';
     const failIfCrimFieldMissing = Boolean(options?.failIfCrimFieldMissing);
 
-    // 1) Resolve custom field id from display name
     let crimFieldId = null;
-    try {
-      crimFieldId = await resolveCustomFieldIdByName(jiraConfig, crimFieldName);
-    } catch (e) {
-      if (failIfCrimFieldMissing) {
-        return { ok: false, error: `Failed to resolve field '${crimFieldName}': ${e.message}` };
-      }
-    }
+    try { crimFieldId = await resolveCustomFieldIdByName(jiraConfig, crimFieldName); }
+    catch (e) { if (failIfCrimFieldMissing) return { ok: false, error: `Failed to resolve field '${crimFieldName}': ${e.message}` }; }
 
-    if (!crimFieldId && failIfCrimFieldMissing) {
-      return { ok: false, error: `Custom field '${crimFieldName}' not found in Jira` };
-    }
+    if (!crimFieldId && failIfCrimFieldMissing) return { ok: false, error: `Custom field '${crimFieldName}' not found in Jira` };
 
-    // 2) Load field definition once (if field exists)
     let crimFieldDef = null;
     if (crimFieldId) {
-      try {
-        crimFieldDef = await getFieldDefinition(jiraUrl, authHeader, crimFieldId);
-      } catch {
-        crimFieldDef = null;
-      }
+      try { crimFieldDef = await getFieldDefinition(jiraUrl, authHeader, crimFieldId); }
+      catch { crimFieldDef = null; }
     }
 
     const results = [];
@@ -486,10 +574,10 @@ const jiraService = {
 
     for (let i = 0; i < input.length; i += 1) {
       const t = input[i] || {};
-      const projectKey = String(t.project || '').trim();
-      const issueType = String(t.issueType || 'Task').trim();
-      const summary = String(t.summary || '').trim();
-      const description = String(t.description || '').trim();
+      const projectKey = String(t.project ?? '').trim();
+      const issueType = String(t.issueType ?? 'Task').trim();
+      const summary = String(t.summary ?? '').trim();
+      const description = String(t.description ?? '').trim();
 
       if (!projectKey || !summary) {
         results.push({ ok: false, index: i, error: 'Missing required fields: project and summary are mandatory' });
@@ -497,12 +585,7 @@ const jiraService = {
       }
 
       const customFields = t.customFields || {};
-      const crimValue =
-        customFields.c_crim_type ??
-        customFields.crim_type ??
-        t.crim_type ??
-        null;
-
+      const crimValue = customFields.c_crim_type ?? customFields.crim_type ?? t.crim_type ?? null;
       const seconds = Number(customFields.timeestimate);
       const hasSeconds = Number.isFinite(seconds) && seconds > 0;
 
@@ -510,20 +593,13 @@ const jiraService = {
         project: { key: projectKey },
         issuetype: { name: issueType },
         summary,
-        // Keep description as plain text (ADF) - simplest compatibility
         description: {
           type: 'doc',
           version: 1,
-          content: [
-            {
-              type: 'paragraph',
-              content: [{ type: 'text', text: description }],
-            },
-          ],
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: description }] }],
         },
       };
 
-      // 3) Set CRIM field depending on schema
       if (crimFieldId && crimValue != null && String(crimValue).trim() !== '') {
         const rawVal = String(crimValue).trim();
         try {
@@ -546,7 +622,6 @@ const jiraService = {
         }
       }
 
-      // 4) Create issue
       try {
         const resp = await axios.post(`${jiraUrl}/rest/api/3/issue`, { fields }, {
           headers: {
@@ -560,40 +635,32 @@ const jiraService = {
         created += 1;
         const issueKey = resp.data?.key;
 
-        // 5) Update time tracking AFTER creation
         let estimateStatus = { ok: true };
-        try {
-          if (issueKey && hasSeconds) {
-            estimateStatus = await updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds);
-          }
-        } catch (te) {
+        try { if (issueKey && hasSeconds) estimateStatus = await updateIssueTimeTracking(jiraUrl, authHeader, issueKey, seconds); }
+        catch (te) {
           const payload = te?.response?.data;
-          estimateStatus = {
-            ok: false,
-            error: payload ? JSON.stringify(payload) : (te?.message || 'Estimate update failed'),
-          };
+          estimateStatus = { ok: false, error: payload ? JSON.stringify(payload) : (te?.message || 'Estimate update failed') };
         }
 
-        // 6) Post estimation comment (WBS + Reasoning)
+        // ✅ Comment: choose SFD comment format if sfdActivities exist
         let commentStatus = { ok: true };
         try {
-          const hasWbs = t?.wbs && typeof t.wbs === 'object' && Object.keys(t.wbs).length > 0;
           const hasReason = String(t?.aiReasoning ?? '').trim().length > 0;
-          if (issueKey && (hasWbs || hasReason)) {
-            const adf = buildEstimationCommentADF(t);
+          const hasWbs = t?.wbs && typeof t.wbs === 'object' && Object.keys(t.wbs).length > 0;
+          const hasSfdActivities = Array.isArray(t?.sfdActivities) && t.sfdActivities.length > 0;
+
+          if (issueKey && (hasReason || hasWbs || hasSfdActivities)) {
+            const adf = hasSfdActivities ? buildSfdEstimationCommentADF(t) : buildStandardEstimationCommentADF(t);
             commentStatus = await addIssueComment(jiraUrl, authHeader, issueKey, adf);
           }
         } catch (ce) {
           commentStatus = { ok: false, error: ce?.message || 'Failed to add comment' };
         }
 
-        // ✅ NEW: Upload attachments (if provided)
         let attachmentStatus = { ok: true, skipped: true, uploaded: 0 };
         try {
           const attachments = Array.isArray(t.attachments) ? t.attachments : [];
-          if (issueKey && attachments.length) {
-            attachmentStatus = await uploadIssueAttachments(jiraUrl, authHeader, issueKey, attachments);
-          }
+          if (issueKey && attachments.length) attachmentStatus = await uploadIssueAttachments(jiraUrl, authHeader, issueKey, attachments);
         } catch (ae) {
           attachmentStatus = { ok: false, error: ae?.message || 'Attachment upload failed' };
         }
@@ -615,11 +682,11 @@ const jiraService = {
       } catch (e) {
         const errPayload = e?.response?.data;
         const firstError =
-          errPayload?.errorMessages?.[0] ||
-          errPayload?.message ||
-          (errPayload?.errors ? JSON.stringify(errPayload.errors) : null) ||
-          e?.message ||
-          'Failed to create issue';
+          errPayload?.errorMessages?.[0]
+          || errPayload?.message
+          || (errPayload?.errors ? JSON.stringify(errPayload.errors) : null)
+          || e?.message
+          || 'Failed to create issue';
         results.push({ ok: false, index: i, error: firstError });
       }
     }

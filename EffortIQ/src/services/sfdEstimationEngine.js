@@ -1,21 +1,21 @@
 'use strict';
 // src/services/sfdEstimationEngine.js
-// =========================================================
-// EffortIQ - SFD Estimation Engine
-// - Takes a SFD .docx document (Detailed Functional Specification)
-// - Uses OpenAI/Azure OpenAI to:
-//    1) Split the SFD into implementable technical activities
-//    2) Classify each activity (category/subtype + complexity)
-//    3) Map each activity to an EXISTING CRIM matrix key (Option A)
-// - Computes effort deterministically using the same matrix logic (DAYS->HOURS)
-// - Generates WBS for each activity and aggregates a combined WBS
+// ================================================= implementable activities from SFD DOCX// =========================================================
+// - AI assigns CRIM Type (MUST be from XLSX allowed CRIM types) + Complexity
+// - System maps CRIM Type -> Subtype -> effort matrix (DAYS -> HOURS)
+// - Per activity: Dev Effort only (NO per-activity WBS)
+// - Total Dev Effort = sum(activity Dev Effort)
+// - Build ONE WBS on total Dev Effort using same % logic (support + e2e + sfd)
+// - Results include:
+//    1) TOTAL DEV row
+//    2) SFD FINAL row (has WBS + Total Effort + Complexity + Direction + Flow)
+//    3) Activity rows
 // =========================================================
 
 const axios = require('axios');
-const { buildWbs } = require('../utils/wbsBuilder.js');
 const { docxService } = require('./docxService.js');
 
-// Keep in sync with estimationEngine.js
+// Keep in sync with estimationEngine.js default day length
 const HOURS_PER_DAY = (() => {
   const v = Number(process.env.EFFORTIQ_HOURS_PER_DAY);
   return Number.isFinite(v) && v > 0 ? v : 8;
@@ -23,7 +23,31 @@ const HOURS_PER_DAY = (() => {
 
 const ALLOWED_COMPLEXITIES = new Set(['Very Simple', 'Simple', 'Medium', 'Complex', 'Very Complex']);
 
-// NOTE: Values in this matrix are DAYS (not hours).
+// --- Same CRIM Type -> Subtype mapping as XLSX estimationEngine.js ---
+const typeToSubtype = {
+  'Custom Objects': 'CU_OB',
+  'Custom Page/Screen/Tab': 'CU_PA',
+  'Custom Event': 'CU_EV',
+  BPA: 'CU_BP',
+  Lobby: 'CU_LO',
+  'Business Report': 'RE_BR',
+  'Quick Report': 'RE_QR',
+  'Interface (IN)': 'IN_IN',
+  'Interface (OUT)': 'IN_OU',
+  'Interface (API)': 'IN_AP',
+  'Interface Armony Data': 'IN_AD',
+  'Modification Flux': 'MO_FL',
+  'Modification Screen': 'MO_SC',
+  'Forms Armony Report': 'FO_AR',
+  'Forms Crystal Report': 'FO_CR',
+  'Forms Report Designer': 'FO_RD',
+  'Data Migration (Migration Task)': 'DM_MT',
+  'Data Migration (Script)': 'DM_SC',
+};
+
+const CRIM_TYPES = Object.keys(typeToSubtype);
+
+// NOTE: values are DAYS (same as XLSX)
 const crimtypeEstimateMap = {
   CU_OB: { 'Very Simple': 0.25, Simple: 0.5, Medium: 1, Complex: 2, 'Very Complex': 4 },
   CU_PA: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 8, 'Very Complex': 16 },
@@ -45,8 +69,6 @@ const crimtypeEstimateMap = {
   DM_SC: { 'Very Simple': 1, Simple: 3, Medium: 6, Complex: 9, 'Very Complex': 12 },
 };
 
-const MATRIX_KEYS = Object.keys(crimtypeEstimateMap);
-
 function safeTrim(v) { return String(v ?? '').trim(); }
 function clampText(text, maxLen) {
   const s = safeTrim(text);
@@ -61,6 +83,14 @@ function normalizeComplexity(v) {
   const s = safeTrim(v);
   return ALLOWED_COMPLEXITIES.has(s) ? s : 'Medium';
 }
+function normalizeCrimType(v) {
+  const raw = safeTrim(v);
+  if (!raw) return 'Custom Objects';
+  if (typeToSubtype[raw]) return raw;
+  const lower = raw.toLowerCase();
+  const match = CRIM_TYPES.find((t) => t.toLowerCase() === lower);
+  return match || 'Custom Objects';
+}
 function extractJsonObject(text) {
   const s = String(text ?? '');
   const start = s.indexOf('{');
@@ -72,50 +102,143 @@ function emitProgress(onProgress, payload) {
   try { if (typeof onProgress === 'function') onProgress(payload); } catch (_) {}
 }
 
-function buildActivitiesPrompt(docText) {
+// Complexity ordering for overall (SFD final) complexity
+const COMPLEXITY_ORDER = {
+  'Very Simple': 1,
+  'Simple': 2,
+  'Medium': 3,
+  'Complex': 4,
+  'Very Complex': 5,
+};
+
+function maxComplexity(list) {
+  let best = 'Medium';
+  let bestRank = 3;
+  for (const c of list) {
+    const rank = COMPLEXITY_ORDER[c] || 0;
+    if (rank > bestRank) { bestRank = rank; best = c; }
+  }
+  return best;
+}
+
+// Same E2E + SFD % tables as current WBS builder (applied on DEV effort)
+const E2E_TEST_PERCENTAGE = {
+  None: 0,
+  'Very Simple': 0.1,
+  Simple: 0.2,
+  Medium: 0.3,
+  Complex: 0.4,
+  'Very Complex': 0.5,
+};
+const SFD_PERCENTAGE = {
+  None: 0,
+  'Very Simple': 0.1,
+  Simple: 0.2,
+  Medium: 0.3,
+  Complex: 0.4,
+  'Very Complex': 0.5,
+};
+
+// Build ONE WBS from total DEV effort
+function buildWbsFromTotalDev(devTotalHours, complexity) {
+  const dev = Number(devTotalHours || 0);
+
+  // Dev Support Activities (same % logic as current; applied on DEV as per your requirement)
+  const unitTesting = dev * 0.2;
+  const codeReview = dev * 0.1;
+  const documentation = dev * 0.05;
+  const codeManagement = dev * 0.05;
+
+  const totalDevSupport = unitTesting + codeReview + documentation + codeManagement;
+  const finalDevEffort = dev + totalDevSupport;
+
+  // Additional sections (based on DEV)
+  const e2e = dev * (E2E_TEST_PERCENTAGE[complexity] ?? 0);
+  const functionalSpec = dev * (SFD_PERCENTAGE[complexity] ?? 0);
+
+  const totalEffort = finalDevEffort + e2e + functionalSpec;
+
+  const wbs = {
+    Development: round1(dev),
+    'Unit Testing': round1(unitTesting),
+    'Code Review': round1(codeReview),
+    Documentation: round1(documentation),
+    'Code Management': round1(codeManagement),
+    'End-to-End Testing': round1(e2e),
+    'Functional Specification': round1(functionalSpec),
+  };
+
+  return {
+    wbs,
+    devSupport: {
+      unitTesting: round1(unitTesting),
+      codeReview: round1(codeReview),
+      documentation: round1(documentation),
+      codeManagement: round1(codeManagement),
+      totalDevSupport: round1(totalDevSupport),
+      finalDevEffort: round1(finalDevEffort),
+    },
+    totals: {
+      totalDevEffort: round1(dev),
+      totalEffort: round1(totalEffort),
+    },
+  };
+}
+
+function resolveDevDaysFromMatrix(crimType, complexity) {
+  const type = normalizeCrimType(crimType);
+  const subtype = typeToSubtype[type];
+  if (!subtype) return { ok: false, type, subtype: null, days: 0, error: `Unknown CRIM Type: ${type}` };
+
+  const map = crimtypeEstimateMap[subtype];
+  if (!map) return { ok: false, type, subtype, days: 0, error: `No estimate map for subtype: ${subtype}` };
+
+  const days = map[complexity];
+  if (days == null) return { ok: false, type, subtype, days: 0, error: `No effort for ${subtype} / ${complexity}` };
+
+  return { ok: true, type, subtype, days: Number(days) };
+}
+
+function buildSfdPrompt(docText) {
   return `
-You are a Senior IFS Technical Architect (IFS Cloud / Aurena / Projection / Client / Entity, Events, Custom Fields, Reports, Interfaces, Data Migration).
+You are a Senior IFS Technical Architect (IFS Cloud / Aurena / Projections / Clients, Custom Objects, Events, Reports, Integrations, Data Migration).
 
 TASK:
-From the SFD (Detailed Functional Specification) content below, extract a list of IMPLEMENTABLE TECHNICAL ACTIVITIES.
-Each activity must be a concrete sub-task a developer can implement and test.
+From the SFD content below, extract IMPLEMENTABLE TECHNICAL ACTIVITIES.
 
-For EACH activity, you MUST:
-1) Write a short title and goal.
-2) Classify it into a high-level category: Customization | Modification | Configuration | Reports | Integration | DataMigration | Other
-3) Provide a subtype (examples:
-   - Configuration: Event Action, Custom Field, Enumeration/LOV, Basic Data rule, Permission/Role, Workflow rule
-   - Modification: Projection + Client file, Entity/Model change, Screen modification, Flow logic / validation
-   - Customization: Custom Object, Custom Page, Custom Event, Lobby, BPA
-   - Reports: Business Reporter, Quick Report, Crystal/Armony, Report Designer
-4) Provide a short IFS technical approach (bullet list of steps), and impacted artifacts (Projection/Client/Entity, LU/Fields, Pages, Events, Reports, APIs etc.).
-5) Assign complexity (Very Simple|Simple|Medium|Complex|Very Complex).
-6) Map the activity to ONE existing CRIM matrix key from this list ONLY:
-   ${MATRIX_KEYS.join(', ')}
+TOP-LEVEL CLASSIFICATION (for SFD final row):
+- direction: Inbound | Outbound | Bi-Directional | N/A
+- flow: Uni-Directional | Bi-Directional | N/A
+
+FOR EACH ACTIVITY YOU MUST:
+1) Provide a short title and goal.
+2) Assign CRIM Type ONLY from this allowed list (must match exactly):
+${CRIM_TYPES.map((t) => `- ${t}`).join('\n')}
+3) Assign complexity ONLY from: Very Simple, Simple, Medium, Complex, Very Complex
+4) Provide AI reasoning (short, professional) justifying CRIM Type + complexity
+5) Provide approach and impacted artifacts (optional but preferred)
 
 STRICT OUTPUT (JSON ONLY):
 Return ONLY a JSON object with this shape:
 {
+  "direction": "Inbound|Outbound|Bi-Directional|N/A",
+  "flow": "Uni-Directional|Bi-Directional|N/A",
   "activities": [
     {
       "title": "",
       "goal": "",
-      "category": "Customization|Modification|Configuration|Reports|Integration|DataMigration|Other",
-      "subtype": "",
-      "ifs_technical_approach": [""],
-      "impacted_artifacts": [""],
+      "crim_type": "",
       "complexity": "Very Simple|Simple|Medium|Complex|Very Complex",
-      "crim_matrix_key": "${MATRIX_KEYS.join('|')}",
-      "assumptions": [""],
-      "risks": [""]
+      "ai_reasoning": "",
+      "ifs_technical_approach": [""],
+      "impacted_artifacts": [""]
     }
   ]
 }
 
 RULES:
-- Do NOT include generic overhead activities (e.g., code review, unit testing, documentation). EffortIQ adds overhead via WBS.
-- Prefer 5-25 activities depending on the SFD size.
-- If the SFD is vague, still propose sensible technical activities and capture assumptions.
+- Do NOT include generic overhead activities (code review, unit testing, documentation).
+- Prefer 5-25 activities depending on SFD size.
 
 SFD CONTENT:
 """
@@ -124,8 +247,7 @@ ${docText}
 `.trim();
 }
 
-// --- Provider calls (OpenAI/Azure OpenAI) ---
-async function openaiExtractActivities(docText, providerConfig = {}) {
+async function openaiExtract(docText, providerConfig = {}) {
   const apiKey = safeTrim(providerConfig.apiKey) || safeTrim(process.env.OPENAI_API_KEY);
   const model = safeTrim(providerConfig.model) || 'gpt-4o-mini';
   const baseUrl = safeTrim(providerConfig.baseUrl) || 'https://api.openai.com';
@@ -133,14 +255,12 @@ async function openaiExtractActivities(docText, providerConfig = {}) {
 
   if (!apiKey) return { ok: false, error: 'Missing OpenAI API Key (Settings or OPENAI_API_KEY)' };
 
-  const prompt = buildActivitiesPrompt(docText);
   const url = `${baseUrl.replace(/\/+$/, '')}/v1/chat/completions`;
-
   const payload = {
     model,
     temperature: 0.2,
-    response_format: { type: 'json_object' }, // JSON-only behavior (you already use this pattern)
-    messages: [{ role: 'user', content: prompt }],
+    response_format: { type: 'json_object' },
+    messages: [{ role: 'user', content: buildSfdPrompt(docText) }],
   };
 
   try {
@@ -151,18 +271,15 @@ async function openaiExtractActivities(docText, providerConfig = {}) {
 
     const content = resp?.data?.choices?.[0]?.message?.content ?? '';
     let parsed = null;
-
     try { parsed = JSON.parse(content); }
     catch {
       const extracted = extractJsonObject(content);
       if (extracted) try { parsed = JSON.parse(extracted); } catch { parsed = null; }
     }
-
     if (!parsed || typeof parsed !== 'object') {
       return { ok: false, error: 'OpenAI returned invalid JSON', detail: { raw: content } };
     }
-
-    return { ok: true, activities: Array.isArray(parsed.activities) ? parsed.activities : [] };
+    return { ok: true, data: parsed };
   } catch (e) {
     const status = e?.response?.status;
     const msg = e?.response?.data?.error?.message || e?.message || 'OpenAI request failed';
@@ -170,11 +287,13 @@ async function openaiExtractActivities(docText, providerConfig = {}) {
   }
 }
 
-async function azureExtractActivities(docText, providerConfig = {}) {
+async function azureExtract(docText, providerConfig = {}) {
   const endpoint = safeTrim(providerConfig.endpoint) || safeTrim(process.env.AZURE_OPENAI_ENDPOINT);
   const apiKey = safeTrim(providerConfig.apiKey) || safeTrim(process.env.AZURE_OPENAI_KEY);
   const deployment = safeTrim(providerConfig.deployment) || safeTrim(process.env.AZURE_OPENAI_DEPLOYMENT);
-  const apiVersion = safeTrim(providerConfig.apiVersion) || safeTrim(process.env.AZURE_OPENAI_API_VERSION) || '2024-06-01';
+  const apiVersion = safeTrim(providerConfig.apiVersion)
+    || safeTrim(process.env.AZURE_OPENAI_API_VERSION)
+    || '2024-06-01';
   const timeoutMs = Number(providerConfig.timeoutMs) > 0 ? Number(providerConfig.timeoutMs) : 90000;
 
   if (!endpoint || !apiKey || !deployment) {
@@ -182,13 +301,14 @@ async function azureExtractActivities(docText, providerConfig = {}) {
   }
 
   const base = endpoint.replace(/^['"]|['"]$/g, '').replace(/\/+$/, '');
-  const url = `${base}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
-  const prompt = buildActivitiesPrompt(docText);
+  const url =
+    `${base}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions`
+    + `?api-version=${encodeURIComponent(apiVersion)}`;
 
   const payload = {
     temperature: 0.2,
     response_format: { type: 'json_object' },
-    messages: [{ role: 'user', content: prompt }],
+    messages: [{ role: 'user', content: buildSfdPrompt(docText) }],
   };
 
   try {
@@ -199,50 +319,29 @@ async function azureExtractActivities(docText, providerConfig = {}) {
 
     const content = resp?.data?.choices?.[0]?.message?.content ?? '';
     let parsed = null;
-
     try { parsed = JSON.parse(content); }
     catch {
       const extracted = extractJsonObject(content);
       if (extracted) try { parsed = JSON.parse(extracted); } catch { parsed = null; }
     }
-
     if (!parsed || typeof parsed !== 'object') {
       return { ok: false, error: 'Azure OpenAI returned invalid JSON', detail: { raw: content } };
     }
-
-    return { ok: true, activities: Array.isArray(parsed.activities) ? parsed.activities : [] };
+    return { ok: true, data: parsed };
   } catch (e) {
     const status = e?.response?.status;
-    const msg = e?.response?.data?.error?.message || e?.response?.data?.message || e?.message || 'Azure OpenAI request failed';
+    const msg =
+      e?.response?.data?.error?.message
+      || e?.response?.data?.message
+      || e?.message
+      || 'Azure OpenAI request failed';
     return { ok: false, error: msg, status, detail: e?.response?.data };
   }
 }
 
-function resolveBaseDays(matrixKey, complexity) {
-  const key = safeTrim(matrixKey);
-  const map = crimtypeEstimateMap[key];
-  if (!map) return { ok: false, baseDays: 0, error: `Unknown matrix key: ${key}` };
-  const days = map[complexity];
-  if (days == null) return { ok: false, baseDays: 0, error: `No effort for ${key} / ${complexity}` };
-  return { ok: true, baseDays: Number(days) };
-}
-
-function aggregateWbs(rows) {
-  const out = {};
-  for (const r of rows) {
-    if (!r || !r.ok || !r.wbs) continue;
-    for (const [k, v] of Object.entries(r.wbs)) {
-      const n = Number(v || 0);
-      if (!Number.isFinite(n) || n <= 0) continue;
-      out[k] = round1((out[k] || 0) + n);
-    }
-  }
-  return out;
-}
-
 const sfdEstimationEngine = {
   /**
-   * Process an SFD file path and return per-activity estimates + aggregated totals.
+   * Process an SFD file path and return activity dev efforts + TOTAL DEV row + FINAL row.
    * @param {string} filePath
    * @param {{provider?:'openai'|'azure', config?:any}} options
    * @param {(progress:any)=>void} onProgress
@@ -261,105 +360,135 @@ const sfdEstimationEngine = {
     emitProgress(onProgress, { stage: 'ai_start', percent: 15, message: 'AI is extracting activities from SFD...' });
 
     let ai;
-    if (provider === 'azure') ai = await azureExtractActivities(docText, providerConfig);
-    else if (provider === 'openai') ai = await openaiExtractActivities(docText, providerConfig);
-    else ai = { ok: false, error: `SFD estimation supports only OpenAI/Azure providers. Selected: ${provider}` };
+    if (provider === 'azure') ai = await azureExtract(docText, providerConfig);
+    else if (provider === 'openai') ai = await openaiExtract(docText, providerConfig);
+    else ai = { ok: false, error: `SFD estimation supports only OpenAI/Azure. Selected: ${provider}` };
 
-    if (!ai.ok) return { ok: false, error: ai.error || 'AI activity extraction failed', status: ai.status, detail: ai.detail };
+    if (!ai.ok) return { ok: false, error: ai.error || 'AI extraction failed', status: ai.status, detail: ai.detail };
 
-    const rawActivities = Array.isArray(ai.activities) ? ai.activities : [];
+    const direction = safeTrim(ai.data?.direction) || 'N/A';
+    const flow = safeTrim(ai.data?.flow) || 'N/A';
+    const rawActivities = Array.isArray(ai.data?.activities) ? ai.data.activities : [];
+
     emitProgress(onProgress, { stage: 'ai_done', percent: 45, message: `AI extracted ${rawActivities.length} activities` });
 
-    const results = [];
+    const activityRows = [];
+    const complexities = [];
+
     for (let i = 0; i < rawActivities.length; i += 1) {
       const a = rawActivities[i] || {};
       const idx = i + 1;
 
       emitProgress(onProgress, {
         stage: 'compute',
-        percent: 45 + Math.round((idx * 50) / Math.max(1, rawActivities.length)),
-        message: `Computing effort for activity ${idx}/${rawActivities.length}`,
+        percent: 45 + Math.round((idx * 45) / Math.max(1, rawActivities.length)),
+        message: `Mapping effort for activity ${idx}/${rawActivities.length}`,
         index: idx,
         total: rawActivities.length,
       });
 
       const title = safeTrim(a.title) || `Activity ${idx}`;
       const goal = safeTrim(a.goal);
-      const category = safeTrim(a.category) || 'Other';
-      const subtype = safeTrim(a.subtype);
+      const crimType = normalizeCrimType(a.crim_type);
       const complexity = normalizeComplexity(a.complexity);
-      const matrixKey = safeTrim(a.crim_matrix_key);
+      const aiReasoning = safeTrim(a.ai_reasoning);
 
-      const base = resolveBaseDays(matrixKey, complexity);
+      complexities.push(complexity);
+
+      const base = resolveDevDaysFromMatrix(crimType, complexity);
       if (!base.ok) {
-        results.push({ ok: false, kind: 'sfd_activity', summary: title, title, category, subtype, matrix_key: matrixKey, complexity, error: base.error, reasoning: `Matrix mapping failed: ${base.error}` });
+        activityRows.push({
+          ok: false,
+          kind: 'sfd_activity',
+          summary: title,
+          title,
+          description: goal,
+          crim_type: crimType,
+          sub_type: base.subtype || '',
+          complexity,
+          error: base.error,
+          reasoning: `Matrix mapping failed: ${base.error}`,
+        });
         continue;
       }
 
-      const baseEffortDays = round1(base.baseDays);
-      const baseEffortHours = round1(baseEffortDays * HOURS_PER_DAY);
-
-      const { wbs, finalEffort } = buildWbs(baseEffortHours, complexity);
-      const finalEffortHours = round1(finalEffort);
+      const devEffortDays = round1(base.days);
+      const devEffortHours = round1(devEffortDays * HOURS_PER_DAY);
 
       const approach = Array.isArray(a.ifs_technical_approach) ? a.ifs_technical_approach : [];
       const artifacts = Array.isArray(a.impacted_artifacts) ? a.impacted_artifacts : [];
-      const assumptions = Array.isArray(a.assumptions) ? a.assumptions : [];
-      const risks = Array.isArray(a.risks) ? a.risks : [];
 
       const reasoning = [
         goal ? `Goal: ${goal}` : null,
-        subtype ? `Subtype: ${subtype}` : null,
-        artifacts.length ? `Impacted: ${artifacts.join(', ')}` : null,
-        approach.length ? `Approach:\n- ${approach.map(x => safeTrim(x)).filter(Boolean).join('\n- ')}` : null,
-        assumptions.length ? `Assumptions:\n- ${assumptions.map(x => safeTrim(x)).filter(Boolean).join('\n- ')}` : null,
-        risks.length ? `Risks:\n- ${risks.map(x => safeTrim(x)).filter(Boolean).join('\n- ')}` : null,
+        `AI CRIM Type: ${base.type} (Subtype: ${base.subtype})`,
+        `AI Complexity: ${complexity}`,
+        aiReasoning ? `AI Reasoning: ${aiReasoning}` : null,
+        artifacts.length ? `Impacted: ${artifacts.map(safeTrim).filter(Boolean).join(', ')}` : null,
+        approach.length ? `Approach:\n- ${approach.map(safeTrim).filter(Boolean).join('\n- ')}` : null,
       ].filter(Boolean).join('\n\n');
 
-      results.push({
+      activityRows.push({
         ok: true,
         kind: 'sfd_activity',
         summary: title,
         title,
         description: goal,
-        crim_type: category,
-        category,
-        subtype,
-        sub_type: matrixKey,
-        matrix_key: matrixKey,
+        crim_type: base.type,
+        sub_type: base.subtype,
         complexity,
         reasoning,
-        baseEffortDays,
-        baseEffortHours,
-        baseEffort: baseEffortHours,
-        finalEffortHours,
-        finalEffort: finalEffortHours,
-        hours: finalEffortHours,
-        wbs,
+        devEffortDays,
+        devEffortHours,
       });
     }
 
-    const okRows = results.filter(r => r && r.ok);
-    const totalFinalHours = round1(okRows.reduce((a, r) => a + Number(r.finalEffortHours || r.finalEffort || 0), 0));
-    const totalBaseHours = round1(okRows.reduce((a, r) => a + Number(r.baseEffortHours || r.baseEffort || 0), 0));
-    const totalWbs = aggregateWbs(okRows);
+    const okActivities = activityRows.filter((r) => r && r.ok && r.kind === 'sfd_activity');
+    const totalDevHours = round1(okActivities.reduce((a, r) => a + Number(r.devEffortHours || 0), 0));
 
-    const summaryRow = {
+    // Overall complexity for FINAL row (deterministic aggregation)
+    const overallComplexity = maxComplexity(complexities.length ? complexities : ['Medium']);
+
+    // Build SINGLE WBS on total dev hours
+    const wbsPack = buildWbsFromTotalDev(totalDevHours, overallComplexity);
+
+    const totalDevRow = {
       ok: true,
-      kind: 'sfd_total',
-      summary: 'TOTAL (All Activities)',
-      title: 'TOTAL (All Activities)',
+      kind: 'sfd_total_dev',
+      summary: 'TOTAL DEV (All Activities)',
+      title: 'TOTAL DEV (All Activities)',
       crim_type: 'SFD',
-      category: 'SFD',
-      subtype: 'TOTAL',
       sub_type: '',
-      matrix_key: '',
-      complexity: 'N/A',
-      reasoning: `Aggregated from ${okRows.length} activities extracted from SFD.`,
-      baseEffort: totalBaseHours,
-      finalEffort: totalFinalHours,
-      hours: totalFinalHours,
-      wbs: totalWbs,
+      complexity: overallComplexity,
+      direction,
+      flow,
+      devEffortHours: totalDevHours,
+      hours: totalDevHours,
+      reasoning: `Sum of Dev Effort across ${okActivities.length} activities.`,
+    };
+
+    const finalRow = {
+      ok: true,
+      kind: 'sfd_final',
+      summary: 'SFD FINAL (WBS & Total Effort)',
+      title: 'SFD FINAL (WBS & Total Effort)',
+      crim_type: 'SFD',
+      sub_type: '',
+      complexity: overallComplexity,
+      direction,
+      flow,
+      // Total Effort (used for Jira original estimate)
+      finalEffort: wbsPack.totals.totalEffort,
+      hours: wbsPack.totals.totalEffort,
+      // Single WBS (viewable)
+      wbs: wbsPack.wbs,
+      // Needed for Jira comment
+      sfdActivities: okActivities.map((x) => ({
+        title: x.title || x.summary,
+        devEffortHours: Number(x.devEffortHours || 0),
+      })),
+      totalDevEffort: wbsPack.totals.totalDevEffort,
+      devSupport: wbsPack.devSupport,
+      reasoning: `Final SFD row built from Total Dev Effort + support + E2E + Functional Spec.`,
     };
 
     emitProgress(onProgress, { stage: 'done', percent: 100, message: 'SFD estimation completed' });
@@ -368,15 +497,17 @@ const sfdEstimationEngine = {
       ok: true,
       data: {
         stats: parsed.stats,
-        totalActivities: results.length,
-        successfulActivities: okRows.length,
-        totalBaseHours,
-        totalFinalHours,
-        totalWbs,
-        rows: [summaryRow, ...results],
+        totalActivities: activityRows.length,
+        successfulActivities: okActivities.length,
+        totalDevHours,
+        overallComplexity,
+        direction,
+        flow,
+        rows: [totalDevRow, finalRow, ...activityRows],
       },
     };
   },
 };
 
 module.exports = { sfdEstimationEngine };
+// EffortIQ - SFD Estimation Engine (Activity Dev-only + Single WBS on Total)
