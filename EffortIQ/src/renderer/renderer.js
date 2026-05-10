@@ -773,6 +773,9 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
 
       const uploadBtn = $('uploadJiraBtn');
       if (uploadBtn) uploadBtn.style.display = estimateOnly ? 'none' : 'inline-block';
+	  
+
+
     } catch (e) {
       enable($('processBtn'));
       showToast(`❌ Estimation failed: ${e.message}`, 'error', 9000);
@@ -894,6 +897,13 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
 
       showToast(`✅ Created ${data.created ?? 0}/${data.total ?? tickets.length} ticket(s)`, 'success', 4000);
       addActivityLog(`Created ${data.created ?? 0}/${data.total ?? tickets.length} Jira ticket(s)`, 'success');
+	  
+	  const uploadBtn = $('uploadJiraBtn');
+		if (uploadBtn) {
+		  uploadBtn.disabled = true;            // ✅ prevent duplicate ticket creation
+		  uploadBtn.textContent = '✅ Uploaded'; // optional but strongly recommended UX
+		}
+
     } catch (e) {
       enable($('uploadJiraBtn'));
       showToast(`❌ Jira upload failed: ${e.message}`, 'error', 9000);
@@ -925,8 +935,21 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
     if ($('uploadJiraBtn')) $('uploadJiraBtn').style.display = 'none';
     if ($('progressFill')) $('progressFill').style.width = '0%';
     if ($('progressText')) $('progressText').textContent = 'Processing: 0/0';
+	lastCreatedJiraUrl = null;	
 	lastCreatedJiraUrl = null;
-	hide($('viewJiraBtn'));
+
+	const viewBtn = $('viewJiraBtn');
+	if (viewBtn) {
+	  viewBtn.style.display = 'none';
+	  viewBtn.disabled = true;
+	}
+
+	const uploadBtn = $('uploadJiraBtn');
+	if (uploadBtn) {
+	  uploadBtn.style.display = 'none';
+	  uploadBtn.disabled = false;              // ✅ re-enable for next batch
+	  uploadBtn.textContent = '📤 Upload to Jira'; // ✅ restore label
+	}
   }
 
   function wireEvents() {
