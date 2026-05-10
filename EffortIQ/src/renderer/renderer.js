@@ -16,6 +16,26 @@
   const enable = (el) => { if (el) el.disabled = false; };
   const disable = (el) => { if (el) el.disabled = true; };
 
+function normalizeBaseUrl(url) {
+  return String(url ?? '').trim().replace(/\/+$/, '');
+}
+
+function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
+  const base = normalizeBaseUrl(jiraBaseUrl);
+  const keys = Array.isArray(issueKeys) ? issueKeys.filter(Boolean) : [];
+
+  if (!base || keys.length === 0) return null;
+
+  // Single issue: open the ticket directly
+  if (keys.length === 1) {
+    return `${base}/browse/${encodeURIComponent(keys[0])}`;
+  }
+
+  // Multiple issues: open Issue Navigator with JQL filter
+  const jql = `key in (${keys.join(',')}) ORDER BY created DESC`;
+  return `${base}/issues/?jql=${encodeURIComponent(jql)}`;
+}
+
   function escapeHtml(input) {
     const s = String(input ?? '');
     return s
@@ -845,23 +865,32 @@
 
       enable($('uploadJiraBtn'));
 
-      if (!res?.ok) { showToast(`❌ Jira upload failed: ${res?.error || 'Unknown error'}`, 'error', 9000); return; }
-      const data = res.data;
-	  
-
-		// ✅ Build Jira navigation URL
-		lastCreatedJiraUrl =
-		  currentConfig.jira?.url && projectKey
-			? `${currentConfig.jira.url}/browse/${projectKey}`
-			: null;
-
-		// ✅ Show View Jira button
-		const viewBtn = $('viewJiraBtn');
-		if (viewBtn && lastCreatedJiraUrl) {
-		  viewBtn.style.display = 'inline-block';
+		const data = res.data;
+		if (!data?.ok) {
+		  showToast(`❌ Jira upload failed: ${data?.error || 'Unknown error'}`, 'error', 9000);
+		  return;
 		}
 
-      if (!data?.ok) { showToast(`❌ Jira upload failed: ${data?.error || 'Unknown error'}`, 'error', 9000); return; }
+		// ✅ Extract created issue keys from Jira response
+		const createdKeys = (data.results || [])
+		  .filter(r => r && r.ok && r.key)
+		  .map(r => String(r.key).trim())
+		  .filter(Boolean);
+
+		// ✅ Build filtered Jira URL (Issue Navigator / browse)
+		lastCreatedJiraUrl = buildCreatedIssuesUrl(currentConfig.jira?.url, createdKeys);
+
+		// ✅ Show View Jira button only when we have a filtered URL
+		const viewBtn = $('viewJiraBtn');
+		if (viewBtn) {
+		  if (lastCreatedJiraUrl) {
+			viewBtn.style.display = 'inline-block';
+			viewBtn.disabled = false;
+		  } else {
+			viewBtn.style.display = 'none';
+			viewBtn.disabled = true;
+		  }
+		}
 
       showToast(`✅ Created ${data.created ?? 0}/${data.total ?? tickets.length} ticket(s)`, 'success', 4000);
       addActivityLog(`Created ${data.created ?? 0}/${data.total ?? tickets.length} Jira ticket(s)`, 'success');
