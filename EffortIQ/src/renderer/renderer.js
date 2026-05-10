@@ -889,6 +889,7 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
 		  if (lastCreatedJiraUrl) {
 			viewBtn.style.display = 'inline-block';
 			viewBtn.disabled = false;
+			viewBtn.textContent = `🔗 View in Jira (${createdKeys.length})`;
 		  } else {
 			viewBtn.style.display = 'none';
 			viewBtn.disabled = true;
@@ -935,7 +936,6 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
     if ($('uploadJiraBtn')) $('uploadJiraBtn').style.display = 'none';
     if ($('progressFill')) $('progressFill').style.width = '0%';
     if ($('progressText')) $('progressText').textContent = 'Processing: 0/0';
-	lastCreatedJiraUrl = null;	
 	lastCreatedJiraUrl = null;
 
 	const viewBtn = $('viewJiraBtn');
