@@ -949,6 +949,9 @@ body.modal-open { overflow: hidden; }
 
 /* ============================
 SFD Summary Bar (Final Effort + buttonsspace-between;SFD Summary Bar (Final Effort + buttons)
+   ============================ */
+.sfd-summary{
+  display:flex;
   align-items:center;
   gap:1rem;
   padding: 1rem 1.25rem;
@@ -977,6 +980,89 @@ SFD Summary Bar (Final Effort + buttonsspace-between;SFD Summary Bar (Final Effo
   .sfd-summary-right{ width:100%; }
   .sfd-summary-right .btn{ width:100%; justify-content:center; }
 }
-============================ */
+
+/*
+
 .sfd-summary{
   display:flex;
+
+/* ============================
+SFD Summary → Align with XLSX totals
+============================ */
+
+.totals-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  padding: 0.9rem 1.25rem;
+  margin-top: 1.25rem;
+
+  border-radius: 10px;
+  border: 1px solid var(--dark-border);
+  background: linear-gradient(
+    180deg,
+    rgba(99, 102, 241, 0.10),
+    rgba(0, 0, 0, 0.20)
+  );
+
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+}
+
+.totals-row .sfd-summary-left {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.totals-row .sfd-summary-title {
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.totals-row .sfd-summary-values {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.totals-row .sfd-summary-values .badge-strong {
+  font-size: 0.95rem;
+  padding: 0.4rem 0.75rem;
+}
+
+.totals-row .sfd-summary-values .pill {
+  font-size: 0.85rem;
+  padding: 0.35rem 0.7rem;
+}
+
+.totals-row .sfd-summary-right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.totals-row .sfd-summary-right .btn {
+  padding: 0.45rem 0.9rem;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 768px) {
+  .totals-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+  }
+
+  .totals-row .sfd-summary-right,
+  .totals-row .sfd-summary-left {
+    justify-content: space-between;
+  }
+
+  .totals-row .sfd-summary-right .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}

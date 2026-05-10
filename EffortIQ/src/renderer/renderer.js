@@ -30,6 +30,7 @@
   let uploadedData = [];
   let estimationResults = [];
   const expandedRows = new Set();
+  let lastCreatedJiraUrl = null;
 
   let currentMode = 'xlsx';
   let uploadedFile = null;
@@ -313,9 +314,13 @@
         return;
       }
 
-      uploadedData = result.data || [];
-      show($('previewCard'));
-      show($('optionsCard'));
+		uploadedData = result.data || [];
+
+		// ✅ RESTORE XLSX preview rendering
+		populatePreviewTable(uploadedData);
+
+		show($('previewCard'));
+		show($('optionsCard'));
 
       showToast(`✅ Loaded ${uploadedData.length} rows`, 'success', 2500);
       addActivityLog(`Loaded ${uploadedData.length} rows`, 'success');
@@ -529,6 +534,44 @@
 
     show(bar);
   }
+
+	function populatePreviewTable(rows) {
+	  const tbody = $('previewTableBody');
+	  const countEl = $('previewCount');
+
+	  if (!tbody) return;
+
+	  tbody.innerHTML = '';
+
+	  const data = Array.isArray(rows) ? rows : [];
+	  const maxPreview = 25; // ✅ legacy-friendly, fast
+
+	  if (countEl) {
+		countEl.textContent = `Previewing ${Math.min(data.length, maxPreview)} of ${data.length} rows`;
+	  }
+
+	  data.slice(0, maxPreview).forEach((row) => {
+		const tr = document.createElement('tr');
+
+		tr.innerHTML = `
+		  <td>${escapeHtml(row.summary || '')}</td>
+		  <td class="preview-desc clamp-1">
+			${escapeHtml(row.description || '')}
+		  </td>
+		  <td>${escapeHtml(row.crim_type || '')}</td>
+		`;
+
+		tbody.appendChild(tr);
+	  });
+
+	  if (!data.length) {
+		tbody.innerHTML = `
+		  <tr>
+			<td colspan="3" class="muted">No valid rows found in the Excel file</td>
+		  </tr>
+		`;
+	  }
+	}
 
   function displayResults(results) {
     const tbody = $('resultsTableBody');
@@ -804,6 +847,20 @@
 
       if (!res?.ok) { showToast(`❌ Jira upload failed: ${res?.error || 'Unknown error'}`, 'error', 9000); return; }
       const data = res.data;
+	  
+
+		// ✅ Build Jira navigation URL
+		lastCreatedJiraUrl =
+		  currentConfig.jira?.url && projectKey
+			? `${currentConfig.jira.url}/browse/${projectKey}`
+			: null;
+
+		// ✅ Show View Jira button
+		const viewBtn = $('viewJiraBtn');
+		if (viewBtn && lastCreatedJiraUrl) {
+		  viewBtn.style.display = 'inline-block';
+		}
+
       if (!data?.ok) { showToast(`❌ Jira upload failed: ${data?.error || 'Unknown error'}`, 'error', 9000); return; }
 
       showToast(`✅ Created ${data.created ?? 0}/${data.total ?? tickets.length} ticket(s)`, 'success', 4000);
@@ -839,6 +896,8 @@
     if ($('uploadJiraBtn')) $('uploadJiraBtn').style.display = 'none';
     if ($('progressFill')) $('progressFill').style.width = '0%';
     if ($('progressText')) $('progressText').textContent = 'Processing: 0/0';
+	lastCreatedJiraUrl = null;
+	hide($('viewJiraBtn'));
   }
 
   function wireEvents() {
@@ -847,6 +906,15 @@
     $('settingsBtn')?.addEventListener('click', () => showSection('settings'));
     $('uploadExcelBtn')?.addEventListener('click', () => showSection('upload'));
     $('setupConfigBtn')?.addEventListener('click', () => showSection('settings'));
+	
+	$('viewJiraBtn')?.addEventListener('click', async () => {
+	  if (!lastCreatedJiraUrl) {
+		showToast('⚠️ Jira URL not available', 'warning', 3000);
+		return;
+	  }
+
+	  await window.api.shell.openExternal(lastCreatedJiraUrl);
+	});	
 
     $('providerType')?.addEventListener('change', (e) => {
       const provider = e.target.value;
