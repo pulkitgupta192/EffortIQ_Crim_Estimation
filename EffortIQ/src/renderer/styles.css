@@ -947,122 +947,199 @@ body.modal-open { overflow: hidden; }
   padding-left: 10px;
 }
 
-/* ============================
-SFD Summary Bar (Final Effort + buttonsspace-between;SFD Summary Bar (Final Effort + buttons)
-   ============================ */
-.sfd-summary{
-  display:flex;
-  align-items:center;
-  gap:1rem;
-  padding: 1rem 1.25rem;
-  border-radius: 12px;
-  border: 1px solid rgba(99,102,241,0.25);
-  background: rgba(0,0,0,0.22);
-}
-.sfd-summary-title{
-  font-weight: 900;
-  color: var(--text-primary);
-  margin-bottom: 6px;
-}
-.sfd-summary-values{
-  display:flex;
-  align-items:center;
-  gap: 0.75rem;
-}
-.sfd-summary-right{
-  display:flex;
-  align-items:center;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-@media (max-width: 760px){
-  .sfd-summary{ flex-direction: column; align-items: flex-start; }
-  .sfd-summary-right{ width:100%; }
-  .sfd-summary-right .btn{ width:100%; justify-content:center; }
-}
 
-/*
+/* =========================================
+Final Effort bar – align like results table row
+========================================= */
 
-.sfd-summary{
-  display:flex;
+.sfd-summary.totals-row {
+  display: grid;
+  grid-template-columns:
+    60px      /* S.No (empty) */
+    1.8fr     /* Activity / Final Effort label */
+    1fr       /* CRIM Type (empty) */
+    1fr       /* Complexity (empty) */
+    140px     /* Effort */
+    120px     /* WBS button */
+    180px     /* Reasoning button */
+    100px;    /* Status (empty) */
 
-/* ============================
-SFD Summary → Align with XLSX totals
-============================ */
-
-.totals-row {
-  display: flex;
   align-items: center;
-  justify-content: space-between;
+  column-gap: 12px;
 
-  padding: 0.9rem 1.25rem;
-  margin-top: 1.25rem;
-
-  border-radius: 10px;
-  border: 1px solid var(--dark-border);
+  padding: 14px 16px;
+  border-radius: 12px;
   background: linear-gradient(
     180deg,
-    rgba(99, 102, 241, 0.10),
-    rgba(0, 0, 0, 0.20)
+    rgba(99,102,241,0.10),
+    rgba(0,0,0,0.25)
   );
 
-  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.03);
+  white-space: nowrap;   /* ✅ force single row */
 }
 
-.totals-row .sfd-summary-left {
+.sfd-summary-left,
+.sfd-summary-right {
+  display: contents;   /* ✅ key trick: become grid cells */
+}
+
+/* Final Effort label → Activity column */
+.sfd-summary-title {
+  grid-column: 2;
+  font-weight: 700;
+}
+
+/* Effort numbers → Effort column */
+.sfd-summary-values {
+  grid-column: 5;
   display: flex;
+  gap: 10px;
   align-items: center;
-  gap: 1rem;
 }
 
-.totals-row .sfd-summary-title {
-  font-weight: 800;
-  font-size: 0.95rem;
-  color: var(--text-secondary);
-  margin: 0;
+/* WBS button → WBS column */
+#sfdViewWbsBtn {
+  grid-column: 6;
 }
 
-.totals-row .sfd-summary-values {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+/* Reasoning button → Reasoning column */
+#sfdViewOverallReasonBtn {
+  grid-column: 7;
 }
 
-.totals-row .sfd-summary-values .badge-strong {
-  font-size: 0.95rem;
-  padding: 0.4rem 0.75rem;
-}
-
-.totals-row .sfd-summary-values .pill {
-  font-size: 0.85rem;
-  padding: 0.35rem 0.7rem;
-}
-
-.totals-row .sfd-summary-right {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-}
-
-.totals-row .sfd-summary-right .btn {
-  padding: 0.45rem 0.9rem;
-  font-size: 0.85rem;
-}
-
-@media (max-width: 768px) {
-  .totals-row {
-    flex-direction: column;
-    align-items: stretch;
+@media (max-width: 1024px) {
+  .sfd-summary.totals-row {
+    display: flex;
+    flex-wrap: wrap;
     gap: 1rem;
   }
 
-  .totals-row .sfd-summary-right,
-  .totals-row .sfd-summary-left {
-    justify-content: space-between;
+  .sfd-summary-left,
+  .sfd-summary-right {
+    display: flex;
+  }
+}
+
+
+/* =========================================================
+Final Effort — make it look like a real table row
+========================================================= */
+
+.sfd-summary.totals-row {
+  display: grid;
+  grid-template-columns:
+    60px        /* S.No (empty) */
+    2.2fr       /* Activity / "Final Effort" */
+    1.2fr       /* CRIM Type (empty) */
+    1fr         /* Complexity (empty) */
+    140px       /* Effort */
+    130px       /* WBS */
+    190px       /* Reasoning */
+    90px;       /* Status (empty) */
+
+  align-items: center;
+  gap: 12px;
+
+  padding: 14px 18px;
+  margin-top: 8px;
+
+  /* ✅ SAME background as table rows */
+  background: rgba(255, 255, 255, 0.02);
+  border-top: 1px solid rgba(255,255,255,0.08);
+
+  /* ✅ Same text behavior */
+  white-space: nowrap;
+  color: #E5E7EB;
+}
+
+/* ✅ Kill layout side-effects */
+.sfd-summary-left,
+.sfd-summary-right {
+  display: contents;
+}
+
+/* Activity / label column */
+.sfd-summary-title {
+  grid-column: 2;
+  font-weight: 600;
+  font-size: 0.95rem;
+
+  /* ✅ SAME color as Activity text */
+  color: #E5E7EB;
+}
+
+/* Effort column */
+.sfd-summary-values {
+  grid-column: 5;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Effort number styling */
+.sfd-summary-values .badge-strong {
+  background: rgba(16, 185, 129, 0.15);
+  color: #6EE7B7;
+  font-weight: 600;
+}
+
+/* Mandays styling */
+.sfd-summary-values .pill {
+  background: rgba(255,255,255,0.08);
+  color: #E5E7EB;
+}
+
+/* Buttons align like table "View" buttons */
+#sfdViewWbsBtn {
+  grid-column: 6;
+}
+
+#sfdViewOverallReasonBtn {
+  grid-column: 7;
+}
+
+@media (max-width: 1024px) {
+  .sfd-summary.totals-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
   }
 
-  .totals-row .sfd-summary-right .btn {
-    width: 100%;
-    justify-content: center;
+  .sfd-summary-left,
+  .sfd-summary-right {
+    display: flex;
   }
+}
+
+/* =========================================
+Final Effort – typography aligned to table rows
+========================================= */
+
+.sfd-summary.totals-row {
+  font-size: 0.875rem;     /* ✅ same as table rows */
+  font-weight: 500;        /* ✅ same as Activity text */
+  color: #E5E7EB;          /* ✅ same as table row text */
+}
+
+.sfd-summary-title {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #E5E7EB;          /* ✅ match Activity text */
+}
+
+.sfd-summary-values .badge-strong {
+  font-size: 0.875rem;
+  font-weight: 600;        /* ✅ matches effort pills in table */
+}
+
+.sfd-summary-values .pill {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: #E5E7EB;          /* ✅ remove “card highlight” feel */
+}
+
+#sfdViewWbsBtn,
+#sfdViewOverallReasonBtn {
+  font-size: 0.875rem;
+  font-weight: 500;
 }
