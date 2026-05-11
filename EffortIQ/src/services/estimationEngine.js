@@ -75,6 +75,94 @@ const crimtypeEstimateMap = {
 
 const ALLOWED_COMPLEXITIES = new Set(['Very Simple', 'Simple', 'Medium', 'Complex', 'Very Complex']);
 
+// NOTE: Values in this matrix are DAYS (activity-level dev effort, not CRIM-level).
+// Use ONLY for SFD extracted activities (subtasks within a CRIM).
+// const crimtypeActivityEstimateMap = {
+  // CU_OB: { 'Very Simple': 0.05, Simple: 0.10, Medium: 0.25, Complex: 0.50, 'Very Complex': 1.00 },
+  // CU_PA: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 2.00, 'Very Complex': 3.50 },
+  // CU_EV: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 3.00 },
+  // CU_BP: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 2.25, 'Very Complex': 4.00 },
+  // CU_LO: { 'Very Simple': 0.20, Simple: 0.40, Medium: 0.80, Complex: 1.50, 'Very Complex': 2.50 },
+
+  // RE_BR: { 'Very Simple': 0.30, Simple: 0.60, Medium: 1.50, Complex: 2.50, 'Very Complex': 4.00 },
+  // RE_QR: { 'Very Simple': 0.15, Simple: 0.30, Medium: 0.60, Complex: 1.20, 'Very Complex': 2.00 },
+
+  // IN_IN: { 'Very Simple': 1.00, Simple: 2.00, Medium: 3.50, Complex: 5.00, 'Very Complex': 7.00 },
+  // IN_OU: { 'Very Simple': 0.75, Simple: 1.50, Medium: 2.75, Complex: 4.00, 'Very Complex': 6.00 },
+  // IN_AP: { 'Very Simple': 0.75, Simple: 1.50, Medium: 2.75, Complex: 4.00, 'Very Complex': 6.00 },
+  // IN_AD: { 'Very Simple': 0.50, Simple: 1.00, Medium: 1.75, Complex: 2.75, 'Very Complex': 4.00 },
+
+  // MO_FL: { 'Very Simple': 0.50, Simple: 1.00, Medium: 2.00, Complex: 3.00, 'Very Complex': 4.50 },
+  // MO_SC: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 2.00, 'Very Complex': 3.50 },
+
+  // FO_RD: { 'Very Simple': 0.50, Simple: 1.00, Medium: 2.00, Complex: 3.50, 'Very Complex': 5.00 },
+  // FO_AR: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.50, 'Very Complex': 2.50 },
+  // FO_CR: { 'Very Simple': 0.35, Simple: 0.75, Medium: 1.50, Complex: 2.75, 'Very Complex': 4.00 },
+
+  // DM_MT: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 2.00, 'Very Complex': 3.50 },
+  // DM_SC: { 'Very Simple': 0.35, Simple: 0.75, Medium: 1.50, Complex: 2.50, 'Very Complex': 3.50 },
+// };
+
+// NOTE: Values in this matrix are DAYS (activity-level DEV effort, not CRIM-level).
+// Use ONLY for SFD extracted activities (subtasks within a CRIM).
+const crimtypeActivityEstimateMap = {
+  // Custom Objects (small technical deltas)
+  CU_OB: { 'Very Simple': 0.10, Simple: 0.20, Medium: 0.40, Complex: 0.80, 'Very Complex': 1.50 },
+
+  // Custom Page/Screen/Tab (UI + projection + permissions)
+  CU_PA: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+
+  // Custom Event (event action + triggers + validations)
+  CU_EV: { 'Very Simple': 0.20, Simple: 0.40, Medium: 0.90, Complex: 1.60, 'Very Complex': 2.50 },
+
+  // BPA (workflow step changes; can be multiple nodes in SFD)
+  CU_BP: { 'Very Simple': 0.25, Simple: 0.60, Medium: 1.20, Complex: 2.00, 'Very Complex': 3.00 },
+
+  // Lobby (lobby element tweaks, queries, security)
+  CU_LO: { 'Very Simple': 0.15, Simple: 0.30, Medium: 0.60, Complex: 1.10, 'Very Complex': 1.75 },
+
+  // Reports (layouts, queries, validations)
+  RE_BR: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.10, Complex: 1.90, 'Very Complex': 2.75 },
+  RE_QR: { 'Very Simple': 0.10, Simple: 0.20, Medium: 0.45, Complex: 0.90, 'Very Complex': 1.40 },
+
+  // Interfaces — split into many activities in SFD; keep per-activity smaller to prevent explosion
+  IN_IN: { 'Very Simple': 0.50, Simple: 1.00, Medium: 1.75, Complex: 2.75, 'Very Complex': 4.00 },
+  IN_OU: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.50, Complex: 2.50, 'Very Complex': 3.75 },
+  IN_AP: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.50, Complex: 2.50, 'Very Complex': 3.75 },
+  IN_AD: { 'Very Simple': 0.30, Simple: 0.60, Medium: 1.10, Complex: 1.90, 'Very Complex': 2.75 },
+
+  // Modifications
+  MO_FL: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.60, Complex: 2.60, 'Very Complex': 3.75 },
+  MO_SC: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+
+  // Forms
+  FO_RD: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.60, Complex: 2.60, 'Very Complex': 3.75 },
+  FO_AR: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.50, 'Very Complex': 2.25 },
+  FO_CR: { 'Very Simple': 0.30, Simple: 0.65, Medium: 1.25, Complex: 2.10, 'Very Complex': 3.00 },
+
+  // Data Migration
+  DM_MT: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+  DM_SC: { 'Very Simple': 0.20, Simple: 0.45, Medium: 0.90, Complex: 1.50, 'Very Complex': 2.25 },
+};
+
+function resolveDevDaysFromMatrix(crimType, complexity, opts = {}) {
+  const { activity = false } = opts;
+  const type = normalizeCrimType(crimType);
+  const subtype = typeToSubtype[type];
+  if (!subtype) return { ok: false, type, subtype: null, days: 0, error: `Unknown CRIM Type: ${type}` };
+
+  const matrix = activity ? crimtypeActivityEstimateMap : crimtypeEstimateMap;
+  const map = matrix[subtype];
+
+  if (!map) return { ok: false, type, subtype, days: 0, error: `No estimate map for subtype: ${subtype}` };
+
+  const days = map[complexity];
+  if (days == null) return { ok: false, type, subtype, days: 0, error: `No effort for ${subtype} / ${complexity}` };
+
+  return { ok: true, type, subtype, days: Number(days) };
+}
+
+
 function safeTrim(v) {
   return String(v ?? '').trim();
 }

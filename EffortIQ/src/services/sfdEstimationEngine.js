@@ -43,26 +43,67 @@ const typeToSubtype = {
 const CRIM_TYPES = Object.keys(typeToSubtype);
 
 // NOTE: values are DAYS (same as XLSX)
+// const crimtypeEstimateMap = {
+  // CU_OB: { 'Very Simple': 0.25, Simple: 0.5, Medium: 1, Complex: 2, 'Very Complex': 4 },
+  // CU_PA: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 8, 'Very Complex': 16 },
+  // CU_EV: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 7, 'Very Complex': 14 },
+  // CU_BP: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 9, 'Very Complex': 18 },
+  // CU_LO: { 'Very Simple': 0.75, Simple: 1.5, Medium: 3, Complex: 6, 'Very Complex': 9 },
+  // RE_BR: { 'Very Simple': 1, Simple: 2, Medium: 6, Complex: 10, 'Very Complex': 15 },
+  // RE_QR: { 'Very Simple': 0.5, Simple: 1, Medium: 2, Complex: 4, 'Very Complex': 6 },
+  // IN_IN: { 'Very Simple': 4, Simple: 8, Medium: 14, Complex: 21, 'Very Complex': 30 },
+  // IN_OU: { 'Very Simple': 3, Simple: 6, Medium: 10, Complex: 15, 'Very Complex': 22 },
+  // IN_AP: { 'Very Simple': 3, Simple: 6, Medium: 10, Complex: 15, 'Very Complex': 22 },
+  // IN_AD: { 'Very Simple': 1.5, Simple: 3, Medium: 6, Complex: 10, 'Very Complex': 15 },
+  // MO_FL: { 'Very Simple': 3, Simple: 6, Medium: 12, Complex: 18, 'Very Complex': 24 },
+  // MO_SC: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 8, 'Very Complex': 16 },
+  // FO_RD: { 'Very Simple': 1.5, Simple: 3, Medium: 6, Complex: 12, 'Very Complex': 18 },
+  // FO_AR: { 'Very Simple': 0.75, Simple: 1.5, Medium: 3, Complex: 6, 'Very Complex': 9 },
+  // FO_CR: { 'Very Simple': 1.25, Simple: 2.25, Medium: 4.5, Complex: 9, 'Very Complex': 13.5 },
+  // DM_MT: { 'Very Simple': 0.5, Simple: 1.5, Medium: 3, Complex: 7, 'Very Complex': 12 },
+  // DM_SC: { 'Very Simple': 1, Simple: 3, Medium: 6, Complex: 9, 'Very Complex': 12 },
+// };
+
 const crimtypeEstimateMap = {
-  CU_OB: { 'Very Simple': 0.25, Simple: 0.5, Medium: 1, Complex: 2, 'Very Complex': 4 },
-  CU_PA: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 8, 'Very Complex': 16 },
-  CU_EV: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 7, 'Very Complex': 14 },
-  CU_BP: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 9, 'Very Complex': 18 },
-  CU_LO: { 'Very Simple': 0.75, Simple: 1.5, Medium: 3, Complex: 6, 'Very Complex': 9 },
-  RE_BR: { 'Very Simple': 1, Simple: 2, Medium: 6, Complex: 10, 'Very Complex': 15 },
-  RE_QR: { 'Very Simple': 0.5, Simple: 1, Medium: 2, Complex: 4, 'Very Complex': 6 },
-  IN_IN: { 'Very Simple': 4, Simple: 8, Medium: 14, Complex: 21, 'Very Complex': 30 },
-  IN_OU: { 'Very Simple': 3, Simple: 6, Medium: 10, Complex: 15, 'Very Complex': 22 },
-  IN_AP: { 'Very Simple': 3, Simple: 6, Medium: 10, Complex: 15, 'Very Complex': 22 },
-  IN_AD: { 'Very Simple': 1.5, Simple: 3, Medium: 6, Complex: 10, 'Very Complex': 15 },
-  MO_FL: { 'Very Simple': 3, Simple: 6, Medium: 12, Complex: 18, 'Very Complex': 24 },
-  MO_SC: { 'Very Simple': 1, Simple: 2, Medium: 4, Complex: 8, 'Very Complex': 16 },
-  FO_RD: { 'Very Simple': 1.5, Simple: 3, Medium: 6, Complex: 12, 'Very Complex': 18 },
-  FO_AR: { 'Very Simple': 0.75, Simple: 1.5, Medium: 3, Complex: 6, 'Very Complex': 9 },
-  FO_CR: { 'Very Simple': 1.25, Simple: 2.25, Medium: 4.5, Complex: 9, 'Very Complex': 13.5 },
-  DM_MT: { 'Very Simple': 0.5, Simple: 1.5, Medium: 3, Complex: 7, 'Very Complex': 12 },
-  DM_SC: { 'Very Simple': 1, Simple: 3, Medium: 6, Complex: 9, 'Very Complex': 12 },
+  // Custom Objects (small technical deltas)
+  CU_OB: { 'Very Simple': 0.10, Simple: 0.20, Medium: 0.40, Complex: 0.80, 'Very Complex': 1.50 },
+
+  // Custom Page/Screen/Tab (UI + projection + permissions)
+  CU_PA: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+
+  // Custom Event (event action + triggers + validations)
+  CU_EV: { 'Very Simple': 0.20, Simple: 0.40, Medium: 0.90, Complex: 1.60, 'Very Complex': 2.50 },
+
+  // BPA (workflow step changes; can be multiple nodes in SFD)
+  CU_BP: { 'Very Simple': 0.25, Simple: 0.60, Medium: 1.20, Complex: 2.00, 'Very Complex': 3.00 },
+
+  // Lobby (lobby element tweaks, queries, security)
+  CU_LO: { 'Very Simple': 0.15, Simple: 0.30, Medium: 0.60, Complex: 1.10, 'Very Complex': 1.75 },
+
+  // Reports (layouts, queries, validations)
+  RE_BR: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.10, Complex: 1.90, 'Very Complex': 2.75 },
+  RE_QR: { 'Very Simple': 0.10, Simple: 0.20, Medium: 0.45, Complex: 0.90, 'Very Complex': 1.40 },
+
+  // Interfaces — split into many activities in SFD; keep per-activity smaller to prevent explosion
+  IN_IN: { 'Very Simple': 0.50, Simple: 1.00, Medium: 1.75, Complex: 2.75, 'Very Complex': 4.00 },
+  IN_OU: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.50, Complex: 2.50, 'Very Complex': 3.75 },
+  IN_AP: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.50, Complex: 2.50, 'Very Complex': 3.75 },
+  IN_AD: { 'Very Simple': 0.30, Simple: 0.60, Medium: 1.10, Complex: 1.90, 'Very Complex': 2.75 },
+
+  // Modifications
+  MO_FL: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.60, Complex: 2.60, 'Very Complex': 3.75 },
+  MO_SC: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+
+  // Forms
+  FO_RD: { 'Very Simple': 0.40, Simple: 0.80, Medium: 1.60, Complex: 2.60, 'Very Complex': 3.75 },
+  FO_AR: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.50, 'Very Complex': 2.25 },
+  FO_CR: { 'Very Simple': 0.30, Simple: 0.65, Medium: 1.25, Complex: 2.10, 'Very Complex': 3.00 },
+
+  // Data Migration
+  DM_MT: { 'Very Simple': 0.25, Simple: 0.50, Medium: 1.00, Complex: 1.75, 'Very Complex': 2.75 },
+  DM_SC: { 'Very Simple': 0.20, Simple: 0.45, Medium: 0.90, Complex: 1.50, 'Very Complex': 2.25 },
 };
+
 
 function safeTrim(v) { return String(v ?? '').trim(); }
 function clampText(text, maxLen) {
