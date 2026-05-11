@@ -1144,3 +1144,8 @@ Final Effort – typography aligned to table rows
   font-weight: 500;
 }
 
+/* ✅ Dashboard – Quick Actions buttons (size symmetry) */
+.quick-action-btn {
+  width: 100%;
+  justify-content: center;
+}

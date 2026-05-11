@@ -74,9 +74,17 @@
               <div class="card-header"><h3>🚀 Quick Actions</h3></div>
 					
               <div class="card-body">
-                <button class="btn btn-primary btn-lg" id="uploadExcelBtn">📂 Estimation</button>
-                <div class="divider"></div>
-                <button class="btn btn-secondary" id="setupConfigBtn">⚙️ Setup Configuration</button>
+                <div class="card-body">
+				  <button class="btn btn-primary btn-lg quick-action-btn" id="uploadExcelBtn">
+					📂 Estimation
+				  </button>
+
+				  <div class="divider"></div>
+
+				  <button class="btn btn-secondary btn-lg quick-action-btn" id="setupConfigBtn">
+					⚙️ Setup Configuration
+				  </button>
+				</div>
               </div>
             </div>
 
@@ -429,6 +437,9 @@
         </section>
 
         <!-- About -->
+        <!-- ===================================================== -->
+        <!-- About Section -->
+        <!-- ===================================================== -->
         <section id="section-about" class="section">
           <div class="section-header">
             <h2>About EffortIQ</h2>
@@ -441,24 +452,24 @@
                 <h3>EffortIQ v1.0.0</h3>
                 <p>A powerful desktop application for intelligent effort estimation and bulk Jira ticket creation.</p>
 
-															
-																							  
-															   
-																						  
-														
-																					 
-																				   
-					 
+                <h4 style="margin-top:20px;">Features:</h4>
+                <ul style="margin:10px 0; padding-left:20px; color:var(--text-secondary);">
+                  <li>✅ Excel file upload with CRIM data</li>
+                  <li>✅ AI-powered effort estimation (OpenAI, Azure, Gemini, Local)</li>
+                  <li>✅ Bulk Jira ticket creation</li>
+                  <li>✅ Fetch-only mode for estimation without ticket creation</li>
+                  <li>✅ Graphical UI: donut charts, expandable rows, exports</li>
+                </ul>
 
-																	
-																							  
-																	
-														 
-																 
-														 
-					 
+                <h4 style="margin-top:20px;">Technology Stack:</h4>
+                <ul style="margin:10px 0; padding-left:20px; color:var(--text-secondary);">
+                  <li>⚡ Electron - Cross-platform desktop app</li>
+                  <li>📊 XLSX - Excel file parsing</li>
+                  <li>🤖 Multiple AI providers integration</li>
+                  <li>🔗 Jira REST API integration</li>
+                </ul>
 
-																				  
+                <h4 style="margin-top:20px;">Made with ❤️ for Jira Teams</h4>
               </div>
             </div>
           </div>
