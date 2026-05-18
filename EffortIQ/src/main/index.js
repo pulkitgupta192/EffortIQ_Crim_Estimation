@@ -193,6 +193,64 @@ ipcMain.handle('jira:listProjects', async (_event, jiraConfig, options) => {
   }
 });
 
+// AI Provider Test
+ipcMain.handle('ai:testProvider', async (_event, provider, config) => {
+  try {
+    const { openaiEstimate } = require('../providers/openaiProvider.js');
+    const { azureEstimate } = require('../providers/azureProvider.js');
+    const { geminiEstimate } = require('../providers/geminiProvider.js');
+    const { localEstimate } = require('../providers/localProvider.js');
+
+    let fn;
+
+    switch ((provider || '').toLowerCase()) {
+      case 'azure':
+        fn = azureEstimate;
+        break;
+      case 'gemini':
+        fn = geminiEstimate;
+        break;
+      case 'local':
+        fn = localEstimate;
+        break;
+      case 'openai':
+      default:
+        fn = openaiEstimate;
+        break;
+    }
+
+    // ✅ Minimal test input (safe & fast)
+    const testSummary = "Test effort estimation";
+    const testDescription = "This is a simple test to validate AI provider configuration";
+
+    const res = await fn(
+      testSummary,
+      testDescription,
+      null,
+      { crim_type: "Custom Objects" },
+      config || {}
+    );
+
+    if (!res?.ok) {
+      return {
+        ok: false,
+        error: res.error || "AI provider test failed"
+      };
+    }
+
+    return {
+      ok: true,
+      data: "AI Provider is working ✅"
+    };
+
+  } catch (e) {
+    return {
+      ok: false,
+      error: e.message
+    };
+  }
+});
+
 // =========================================================
 // App lifecycle
 // =========================================================

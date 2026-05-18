@@ -34,6 +34,11 @@ contextBridge.exposeInMainWorld('api', {
     createTickets: (tickets, jiraConfig, options) =>
       invoke('jira:createTickets', tickets, jiraConfig, options),
   },
+  
+  ai: {
+    testProvider: (provider, config) =>
+  	invoke('ai:testProvider', provider, config),
+  },
 
   shell: {
     openExternal: (url) => invoke('shell:openExternal', url),

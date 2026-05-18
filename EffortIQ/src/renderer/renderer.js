@@ -977,6 +977,54 @@ function buildCreatedIssuesUrl(jiraBaseUrl, issueKeys) {
 
     $('saveConfigBtn')?.addEventListener('click', saveConfiguration);
 
+	$('testAiBtn')?.addEventListener('click', async () => {
+	  try {
+		const provider = $('providerType')?.value || 'openai';
+
+		let config = {};
+
+		if (provider === 'openai') {
+		  config = {
+			apiKey: $('openaiKey')?.value,
+			model: $('openaiModel')?.value
+		  };
+		} else if (provider === 'azure') {
+		  config = {
+			endpoint: $('azureEndpoint')?.value,
+			apiKey: $('azureKey')?.value,
+			deployment: $('azureDeployment')?.value,
+			apiVersion: $('azureApiVersion')?.value
+		  };
+		} else if (provider === 'gemini') {
+		  config = {
+			apiKey: $('geminiKey')?.value,
+			model: $('geminiModel')?.value
+		  };
+		} else if (provider === 'local') {
+		  config = {
+			endpoint: $('localEndpoint')?.value
+		  };
+		}
+
+		const result = await window.api.ai.testProvider(provider, config);
+
+		const resultBox = $('aiTestResult');
+
+		if (result.ok) {
+		  //resultBox.className = "test-result show success";
+		  //resultBox.textContent = "✅ AI Provider Connected Successfully";
+		  showToast("✅ AI connection successful", "success");
+		} else {
+		  //resultBox.className = "test-result show error";
+		  //resultBox.textContent = `❌ ${result.error}`;
+		  showToast(`❌ ${result.error}`, "error");
+		}
+
+	  } catch (e) {
+		showToast(`❌ Test failed: ${e.message}`, "error");
+	  }
+	});
+
     $('testJiraBtn')?.addEventListener('click', async () => {
       const jiraConfig = { url: $('jiraUrl')?.value || '', email: $('jiraEmail')?.value || '', token: $('jiraToken')?.value || '' };
       const res = await window.api.jira.testConnection(jiraConfig);
